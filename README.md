@@ -59,12 +59,12 @@ You may need to add `--with_depth` if you want to quantity depth during training
 `--imgScale_test` is the downsample ratio during validation, like 0.5. The training process takes about 30h on single RTX 2080Ti
 for 6 epochs. 
 
-*Important*: please always set batch_size to 1 when you are trining a genelize model, you can enarge it when fine-tuning.
+*Important*: please always set batch_size to 1 when you are trining a genelize model, you can enlarge it when fine-tuning.
 
 *Checkpoint*: a pre-trained checkpint is included in `ckpts/mvsnerf-v0.tar`. 
 
 *Evaluation*: We also provide a rendering and quantity scipt  in `renderer.ipynb`, 
-and you also can use the run_batch.py if you want to testing or finetuning on different dataset.
+and you can also use the run_batch.py if you want to testing or finetuning on different dataset.
 
 Rendering from the trained model should have result like this:
 
@@ -125,7 +125,7 @@ CUDA_VISIBLE_DEVICES=0  python train_mvs_nerf_finetuning_pl.py  \
 ## Rendering
 After training or finetuning, you can render free-viewpoint videos
 with the `renderer-video.ipynb`. if you want to use your own data,
-please follow the prepare the data (intrinsic, nearfar and extrinsic either with
+please using the right hand coordinate system (intrinsic, nearfar and extrinsic either with
 camera to world or world to camera in opencv format) and modify the rendering scipts.
 
 After 10k iterations (~ 15min), you should have videos like this:
@@ -145,21 +145,21 @@ If you find our code or paper helps, please consider citing:
 }
 ```
 
-Big thanks to [**CasMVSNet_pl**](https://github.com/kwea123/CasMVSNet_pl), our code are partially
-borrow from them.
+Big thanks to [**CasMVSNet_pl**](https://github.com/kwea123/CasMVSNet_pl), our code is partially
+borrowing from them.
 
 ## Relevant Works
 [**MVSNet: Depth Inference for Unstructured Multi-view Stereo (ECCV 2018)**](https://arxiv.org/abs/1804.02505)<br>
-Justus Thies, Michael Zollhöfer, Matthias Nießner
+Yao Yao, Zixin Luo, Shiwei Li, Tian Fang, Long Quan
 
 [**Cascade Cost Volume for High-Resolution Multi-View Stereo and Stereo Matching (CVPR 2020)**](https://arxiv.org/abs/1912.06378)<br>
-Vincent Sitzmann, Justus Thies, Felix Heide, Matthias Nießner, Gordon Wetzstein, Michael Zollhöfer
+Xiaodong Gu, Zhiwen Fan, Zuozhuo Dai, Siyu Zhu, Feitong Tan, Ping Tan
 
 [**NeRF: Representing Scenes as Neural Radiance Fields for View Synthesis (ECCV 2020)**](http://www.matthewtancik.com/nerf)<br>
 Ben Mildenhall, Pratul P. Srinivasan, Matthew Tancik, Jonathan T. Barron, Ravi Ramamoorthi, Ren Ng
 
 [**IBRNet: Learning Multi-View Image-Based Rendering (CVPR 2021)**](https://ibrnet.github.io/)<br>
-Konstantinos Rematas, Vittorio Ferrari
+Qianqian Wang, Zhicheng Wang, Kyle Genova, Pratul Srinivasan, Howard Zhou, Jonathan T. Barron, Ricardo Martin-Brualla, Noah Snavely, Thomas Funkhouser
 
 [**PixelNeRF: Neural Radiance Fields from One or Few Images (CVPR 2021)**](https://alexyu.net/pixelnerf/)<br>
-Michael Oechsle, Michael Niemeyer, Lars Mescheder, Thilo Strauss, Andreas Geiger
+Alex Yu, Vickie Ye, Matthew Tancik, Angjoo Kanazawa
