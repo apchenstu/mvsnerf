@@ -6,6 +6,8 @@ from PIL import Image
 import torch.nn.functional as F
 import torchvision.transforms as T
 
+from scipy.spatial.transform import Rotation as R
+
 # Misc
 img2mse = lambda x, y : torch.mean((x - y) ** 2)
 mse2psnr = lambda x : -10. * torch.log(x) / torch.log(torch.Tensor([10.]))
@@ -107,7 +109,7 @@ def get_rays_mvs(H, W, intrinsic, c2w, N=1024, isRandom=True, is_precrop_iters=F
 
 
 
-def get_ndc_coordinate(w2c_ref, intrinsic_ref, point_samples, inv_scale, near=2, far=6, pad=0):
+def get_ndc_coordinate(w2c_ref, intrinsic_ref, point_samples, inv_scale, near=2, far=6, pad=0, lindisp=False):
     '''
         point_samples [N_rays N_sample 3]
     '''
@@ -124,8 +126,11 @@ def get_ndc_coordinate(w2c_ref, intrinsic_ref, point_samples, inv_scale, near=2,
     if intrinsic_ref is not None:
         # using projection
         point_samples_pixel =  point_samples @ intrinsic_ref.t()
-        point_samples_pixel[:,:2] = point_samples_pixel[:,:2] / (point_samples_pixel[:,-1:] * inv_scale.reshape(1,2))  # normalize to 0~1
-        point_samples_pixel[:,2] = (point_samples_pixel[:,2] - near) / (far - near)  # normalize to 0~1
+        point_samples_pixel[:,:2] = (point_samples_pixel[:,:2] / point_samples_pixel[:,-1:] + 0.0) / inv_scale.reshape(1,2)  # normalize to 0~1
+        if not lindisp:
+            point_samples_pixel[:,2] = (point_samples_pixel[:,2] - near) / (far - near)  # normalize to 0~1
+        else:
+            point_samples_pixel[:,2] = (1.0/point_samples_pixel[:,2]-1.0/near)/(1.0/far - 1.0/near)
     else:
         # using bounding box
         near, far = near.view(1,3), far.view(1,3)
@@ -292,7 +297,7 @@ def build_rays_test(H,W, tgt_to_world, world_to_ref, intrinsic, near_fars_ref, n
     return ray_coordinate_world, ray_dir_world,ray_coordinate_ref, depth_candidates, rays_os, ndc_parameters
 
 
-def build_color_volume(point_samples, pose_ref, imgs, idxs=[0,1,2], downscale=1.0, with_mask=False):
+def build_color_volume(point_samples, pose_ref, imgs, img_feat=None, downscale=1.0, with_mask=False):
     '''
     point_world: [N_ray N_sample 3]
     imgs: [N V 3 H W]
@@ -303,15 +308,19 @@ def build_color_volume(point_samples, pose_ref, imgs, idxs=[0,1,2], downscale=1.
     inv_scale = torch.tensor([W - 1, H - 1]).to(device)
 
     C += with_mask
+    C += 0 if img_feat is None else img_feat.shape[2]
     colors = torch.empty((*point_samples.shape[:2], V*C), device=imgs.device, dtype=torch.float)
-    for i,idx in enumerate(idxs):
+    for i,idx in enumerate(range(V)):
 
         w2c_ref, intrinsic_ref = pose_ref['w2cs'][idx], pose_ref['intrinsics'][idx].clone()  # assume camera 0 is reference
-        intrinsic_ref[:2] /= downscale
         point_samples_pixel = get_ndc_coordinate(w2c_ref, intrinsic_ref, point_samples, inv_scale)[None]
         grid = point_samples_pixel[...,:2]*2.0-1.0
 
+        # img = F.interpolate(imgs[:, idx], scale_factor=downscale, align_corners=True, mode='bilinear',recompute_scale_factor=True) if downscale != 1.0 else imgs[:, idx]
         data = F.grid_sample(imgs[:, idx], grid, align_corners=True, mode='bilinear', padding_mode='border')
+        if img_feat is not None:
+            data = torch.cat((data,F.grid_sample(img_feat[:,idx], grid, align_corners=True, mode='bilinear', padding_mode='zeros')),dim=1)
+
         if with_mask:
             in_mask = ((grid >-1.0)*(grid < 1.0))
             in_mask = (in_mask[...,0]*in_mask[...,1]).float()
@@ -466,15 +475,19 @@ def read_pfm(filename):
     return data, scale
 
 
-from scipy.spatial.transform import Rotation as R
-def gen_render_path(c2ws, N_views=10):
+
+def gen_render_path(c2ws, N_views=30):
     N = len(c2ws)
     rotvec, positions = [], []
     rotvec_inteplat, positions_inteplat = [], []
-    weight = np.linspace(1.0, .0, N_views, endpoint=False).reshape(N_views, 1)
+    weight = np.linspace(1.0, .0, N_views//3, endpoint=False).reshape(-1, 1)
     for i in range(N):
         r = R.from_matrix(c2ws[i, :3, :3])
-        rotvec.append(r.as_euler('xyz',degrees=True).reshape(1, 3))
+        euler_ange = r.as_euler('xyz', degrees=True).reshape(1, 3)
+        if i:
+            mask = np.abs(euler_ange - rotvec[0])>180
+            euler_ange[mask] += 360.0
+        rotvec.append(euler_ange)
         positions.append(c2ws[i, :3, 3:].reshape(1, 3))
 
         if i:
@@ -618,31 +631,11 @@ def homo_warp(src_feat, proj_mat, depth_values, src_grid=None, pad=0):
 
 
 ###############################  render path  ####################################
-trans_t = lambda t : np.array([
-    [1,0,0,0],
-    [0,1,0,0],
-    [0,0,1,t],
-    [0,0,0,1.0]])
-
-rot_phi = lambda phi : np.array([
-    [1,0,0,0],
-    [0,np.cos(phi),-np.sin(phi),0],
-    [0,np.sin(phi), np.cos(phi),0],
-    [0,0,0,1]])
-
-rot_theta = lambda th : np.array([
-    [np.cos(th),0,-np.sin(th),0],
-    [0,1,0,0],
-    [np.sin(th),0, np.cos(th),0],
-    [0,0,0,1]])
-
-def pose_spherical_nerf(theta, phi, radius):
-    c2w = trans_t(radius)
-    c2w = rot_phi(phi/180.*np.pi) @ c2w
-    c2w = rot_theta(theta/180.*np.pi) @ c2w
-    c2w = np.array([[-1,0,0,0],[0,0,1,0],[0,1,0,0],[0,0,0,1]]) @ c2w
-    c2w = c2w @ np.array([[1,0,0,0],[0,-1,0,0],[0,0,-1,0],[0,0,0,1]])
-    return c2w
+def pose_spherical_nerf(euler, radius=4.0):
+    c2ws_render = np.eye(4)
+    c2ws_render[:3,:3] =  R.from_euler('xyz', euler, degrees=True).as_matrix()
+    c2ws_render[:3,3]  = c2ws_render[:3,:3] @ np.array([0.0,0.0,-radius])
+    return c2ws_render
 
 def normalize(v):
     """Normalize a vector."""

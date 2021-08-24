@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="WebServers">
+    <option name="servers">
+      <webServer id="82926fb9-8445-4845-aaca-9d0ce697cd27" name="67" url="http://10.15.89.67">
+        <fileTransfer host="10.15.89.67" port="22" rootFolder="/mnt/new_disk_2/anpei/code/MVS-NeRF/" accessType="SFTP">
+          <advancedOptions>
+            <advancedOptions dataProtectionLevel="Private" passiveMode="true" shareSSLContext="true" />
+          </advancedOptions>
+          <option name="port" value="22" />
+        </fileTransfer>
+      </webServer>
+    </option>
+  </component>
+</project>

@@ -140,65 +140,7 @@ class MultiHeadAttention(nn.Module):
 
         return q, attn
 
-class Renderer_v0(nn.Module):
-    def __init__(self, D=8, W=256, input_ch=3, input_ch_views=3, output_ch=4, input_ch_feat=8, skips=[4], use_viewdirs=False):
-        """
-        """
-        super(Renderer_v0, self).__init__()
-        self.D = D
-        self.W = W
-        self.input_ch = input_ch
-        self.input_ch_views = input_ch_views
-        self.skips = skips
-        self.use_viewdirs = use_viewdirs
-        self.in_ch_pts, self.in_ch_views, self.in_ch_feat = input_ch, input_ch_views, input_ch_feat
 
-        self.pts_linears = nn.ModuleList(
-            [nn.Linear(input_ch, W, bias=True)] + [nn.Linear(W, W, bias=True) if i not in self.skips else nn.Linear(W + input_ch, W) for i in range(D-1)])
-        self.pts_bias = nn.Linear(input_ch_feat, W)
-        self.views_linears = nn.ModuleList([nn.Linear(input_ch_views + W, W//2)])
-
-        if use_viewdirs:
-            self.feature_linear = nn.Linear(W, W)
-            self.alpha_linear = nn.Linear(W, 1)
-            self.rgb_linear = nn.Linear(W//2, 3)
-        else:
-            self.output_linear = nn.Linear(W, output_ch)
-
-        self.pts_linears.apply(weights_init)
-        self.views_linears.apply(weights_init)
-        self.feature_linear.apply(weights_init)
-        self.alpha_linear.apply(weights_init)
-        self.rgb_linear.apply(weights_init)
-
-    def forward(self, x):
-        dim = x.shape[-1]
-        in_ch_feat = dim-self.in_ch_pts-self.in_ch_views
-        input_pts, input_feats, input_views = torch.split(x, [self.in_ch_pts, in_ch_feat, self.in_ch_views], dim=-1)
-
-        h = input_pts
-        bias = self.pts_bias(input_feats)
-        for i, l in enumerate(self.pts_linears):
-            h = self.pts_linears[i](h) + bias
-            h = F.relu(h)
-            if i in self.skips:
-                h = torch.cat([input_pts, h], -1)
-
-        if self.use_viewdirs:
-            alpha = torch.relu(self.alpha_linear(h))
-            feature = self.feature_linear(h)
-            h = torch.cat([feature, input_views], -1)
-
-            for i, l in enumerate(self.views_linears):
-                h = self.views_linears[i](h)
-                h = F.relu(h)
-
-            rgb = torch.sigmoid(self.rgb_linear(h))
-            outputs = torch.cat([rgb, alpha], -1)
-        else:
-            outputs = self.output_linear(h)
-
-        return outputs
 
 class Renderer_ours(nn.Module):
     def __init__(self, D=8, W=256, input_ch=3, input_ch_views=3, output_ch=4, input_ch_feat=8, skips=[4], use_viewdirs=False):
@@ -230,6 +172,24 @@ class Renderer_ours(nn.Module):
         self.feature_linear.apply(weights_init)
         self.alpha_linear.apply(weights_init)
         self.rgb_linear.apply(weights_init)
+
+    def forward_alpha(self, x):
+
+        dim = x.shape[-1]
+        in_ch_feat = dim-self.in_ch_pts
+        input_pts, input_feats = torch.split(x, [self.in_ch_pts, in_ch_feat], dim=-1)
+
+        h = input_pts
+        bias = self.pts_bias(input_feats)
+        for i, l in enumerate(self.pts_linears):
+            h = self.pts_linears[i](h) * bias
+            h = F.relu(h)
+            if i in self.skips:
+                h = torch.cat([input_pts, h], -1)
+
+        alpha = torch.relu(self.alpha_linear(h))
+        return alpha
+
 
     def forward(self, x):
         dim = x.shape[-1]
@@ -341,8 +301,241 @@ class Renderer_color_fusion(nn.Module):
         outputs = torch.cat([rgb, alpha], -1)
         return outputs
 
+class Renderer_attention2(nn.Module):
+    def __init__(self, D=8, W=256, input_ch=3, input_ch_views=3, output_ch=4, input_ch_feat=8, skips=[4], use_viewdirs=False):
+        """
+        """
+        super(Renderer_attention, self).__init__()
+        self.D = D
+        self.W = W
+        self.input_ch = input_ch
+        self.input_ch_views = input_ch_views
+        self.skips = skips
+        self.use_viewdirs = use_viewdirs
+        self.in_ch_pts, self.in_ch_views, self.in_ch_feat = input_ch, input_ch_views, input_ch_feat
+
+        self.attension_dim = 4 + 8
+        self.color_attention = MultiHeadAttention(4, self.attension_dim, 4, 4)
+        self.weight_out = nn.Linear(self.attension_dim, 3)
 
 
+
+        self.pts_linears = nn.ModuleList(
+            [nn.Linear(self.in_ch_pts, W, bias=True)] + [nn.Linear(W, W, bias=True) if i not in self.skips else nn.Linear(W + self.in_ch_pts, W) for i in range(D-1)])
+        self.pts_bias = nn.Linear(11, W)
+        self.views_linears = nn.ModuleList([nn.Linear(input_ch_views + W, W//2)])
+
+        if use_viewdirs:
+            self.feature_linear = nn.Linear(W, W)
+            self.alpha_linear = nn.Linear(W, 1)
+            self.rgb_linear = nn.Linear(W//2, 3)
+        else:
+            self.output_linear = nn.Linear(W, output_ch)
+
+        self.pts_linears.apply(weights_init)
+        self.views_linears.apply(weights_init)
+        self.feature_linear.apply(weights_init)
+        self.alpha_linear.apply(weights_init)
+        self.rgb_linear.apply(weights_init)
+
+    def forward(self, x):
+        N_ray, N_sample, dim = x.shape
+        in_ch_feat = dim-self.in_ch_pts-self.in_ch_views
+        input_pts, input_feats, input_views = torch.split(x, [self.in_ch_pts, in_ch_feat, self.in_ch_views], dim=-1)
+
+        if input_feats.shape[-1]>8+3:
+            colors = input_feats[...,8:].view(N_ray*N_sample,-1,4)
+            weight = torch.cat((colors,input_feats[...,:8].reshape(N_ray*N_sample, 1, -1).expand(-1, colors.shape[-2], -1)),dim=-1)
+
+            weight, _ = self.color_attention(weight, weight, weight)
+            colors = torch.sum(self.weight_out(weight),dim=-2).view(N_ray, N_sample, -1)
+
+            # colors = self.weight_out(input_feats)
+
+        else:
+            colors = input_feats[...,-3:]
+
+        h = input_pts
+        # bias = self.pts_bias(colors)
+        bias = self.pts_bias(torch.cat((input_feats[...,:8],colors),dim=-1))
+        for i, l in enumerate(self.pts_linears):
+            h = self.pts_linears[i](h) * bias
+            h = F.relu(h)
+            if i in self.skips:
+                h = torch.cat([input_pts, h], -1)
+
+
+        if self.use_viewdirs:
+            alpha = torch.relu(self.alpha_linear(h))
+            feature = self.feature_linear(h)
+            h = torch.cat([feature, input_views], -1)
+
+            for i, l in enumerate(self.views_linears):
+                h = self.views_linears[i](h)
+                h = F.relu(h)
+
+            rgb = torch.sigmoid(self.rgb_linear(h))
+            outputs = torch.cat([rgb, alpha], -1)
+        else:
+            outputs = self.output_linear(h)
+        outputs = torch.cat((outputs,colors), dim=-1)
+        return outputs
+
+class Renderer_attention(nn.Module):
+    def __init__(self, D=8, W=256, input_ch=3, input_ch_views=3, output_ch=4, input_ch_feat=8, skips=[4], use_viewdirs=False):
+        """
+        """
+        super(Renderer_attention, self).__init__()
+        self.D = D
+        self.W = W
+        self.input_ch = input_ch
+        self.input_ch_views = input_ch_views
+        self.skips = skips
+        self.use_viewdirs = use_viewdirs
+        self.in_ch_pts, self.in_ch_views, self.in_ch_feat = input_ch, input_ch_views, input_ch_feat
+
+        self.attension_dim = 4 + 8
+        self.color_attention = MultiHeadAttention(4, self.attension_dim, 4, 4)
+        self.weight_out = nn.Linear(self.attension_dim, 3)
+
+        # self.weight_out = nn.Linear(self.in_ch_feat, 8)
+
+        self.pts_linears = nn.ModuleList(
+            [nn.Linear(self.in_ch_pts, W, bias=True)] + [nn.Linear(W, W, bias=True)]*(D-1))
+        self.pts_bias = nn.Linear(11, W)
+        self.views_linears = nn.ModuleList([nn.Linear(input_ch_views + W, W//2)])
+
+        if use_viewdirs:
+            self.feature_linear = nn.Linear(W, W)
+            self.alpha_linear = nn.Linear(W, 1)
+            self.rgb_linear = nn.Linear(W//2, 3)
+        else:
+            self.output_linear = nn.Linear(W, output_ch)
+
+        self.pts_linears.apply(weights_init)
+        self.views_linears.apply(weights_init)
+        self.feature_linear.apply(weights_init)
+        self.alpha_linear.apply(weights_init)
+        self.rgb_linear.apply(weights_init)
+
+    def forward(self, x):
+        N_ray, N_sample, dim = x.shape
+        in_ch_feat = dim-self.in_ch_pts-self.in_ch_views
+        input_pts, input_feats, input_views = torch.split(x, [self.in_ch_pts, in_ch_feat, self.in_ch_views], dim=-1)
+
+        if input_feats.shape[-1]>8+3:
+            colors = input_feats[...,8:].view(N_ray*N_sample,-1,4)
+            weight = torch.cat((colors,input_feats[...,:8].reshape(N_ray*N_sample, 1, -1).expand(-1, colors.shape[-2], -1)),dim=-1)
+
+            weight, _ = self.color_attention(weight, weight, weight)
+            colors = torch.sum(torch.sigmoid(self.weight_out(weight)),dim=-2).view(N_ray, N_sample, -1)
+
+            # colors = self.weight_out(input_feats)
+
+        else:
+            colors = input_feats[...,-3:]
+
+        h = input_pts
+        # bias = self.pts_bias(colors)
+        bias = self.pts_bias(torch.cat((input_feats[...,:8],colors),dim=-1))
+        for i, l in enumerate(self.pts_linears):
+            h = self.pts_linears[i](h) + bias
+            h = F.relu(h)
+            # if i in self.skips:
+            #     h = torch.cat([input_pts, h], -1)
+
+
+        if self.use_viewdirs:
+            alpha = torch.relu(self.alpha_linear(h))
+            feature = self.feature_linear(h)
+            h = torch.cat([feature, input_views], -1)
+
+            for i, l in enumerate(self.views_linears):
+                h = self.views_linears[i](h)
+                h = F.relu(h)
+
+            rgb = torch.sigmoid(self.rgb_linear(h))
+            outputs = torch.cat([rgb, alpha, colors], -1)
+        else:
+            outputs = self.output_linear(h)
+        outputs = torch.cat((outputs,colors), dim=-1)
+        return outputs
+
+class Renderer_linear(nn.Module):
+    def __init__(self, D=8, W=256, input_ch=3, input_ch_views=3, output_ch=4, input_ch_feat=8, skips=[4], use_viewdirs=False):
+        """
+        """
+        super(Renderer_linear, self).__init__()
+        self.D = D
+        self.W = W
+        self.input_ch = input_ch
+        self.input_ch_views = input_ch_views
+        self.skips = skips
+        self.use_viewdirs = use_viewdirs
+        self.in_ch_pts, self.in_ch_views, self.in_ch_feat = input_ch, input_ch_views, input_ch_feat
+
+        self.pts_linears = nn.ModuleList(
+            [nn.Linear(input_ch, W, bias=True)] + [nn.Linear(W, W, bias=True) if i not in self.skips else nn.Linear(W + input_ch, W) for i in range(D-1)])
+        self.pts_bias = nn.Linear(input_ch_feat, W)
+        self.views_linears = nn.ModuleList([nn.Linear(input_ch_views + W, W//2)])
+
+        if use_viewdirs:
+            self.feature_linear = nn.Linear(W, W)
+            self.alpha_linear = nn.Linear(W, 1)
+            self.rgb_linear = nn.Linear(W//2, 3)
+        else:
+            self.output_linear = nn.Linear(W, output_ch)
+
+        self.pts_linears.apply(weights_init)
+        self.views_linears.apply(weights_init)
+        self.feature_linear.apply(weights_init)
+        self.alpha_linear.apply(weights_init)
+        self.rgb_linear.apply(weights_init)
+
+    def forward_alpha(self,x):
+        dim = x.shape[-1]
+        input_pts, input_feats = torch.split(x, [self.in_ch_pts, self.in_ch_feat], dim=-1)
+
+        h = input_pts
+        bias = self.pts_bias(input_feats)
+        for i, l in enumerate(self.pts_linears):
+            h = self.pts_linears[i](h) + bias
+            h = F.relu(h)
+            if i in self.skips:
+                h = torch.cat([input_pts, h], -1)
+
+        alpha = self.alpha_linear(h)
+        return alpha
+
+    def forward(self, x):
+        dim = x.shape[-1]
+        in_ch_feat = dim-self.in_ch_pts-self.in_ch_views
+        input_pts, input_feats, input_views = torch.split(x, [self.in_ch_pts, in_ch_feat, self.in_ch_views], dim=-1)
+
+        h = input_pts
+        bias = self.pts_bias(input_feats) #if in_ch_feat == self.in_ch_feat else  input_feats
+        for i, l in enumerate(self.pts_linears):
+            h = self.pts_linears[i](h) + bias
+            h = F.relu(h)
+            if i in self.skips:
+                h = torch.cat([input_pts, h], -1)
+
+
+        if self.use_viewdirs:
+            alpha = torch.relu(self.alpha_linear(h))
+            feature = self.feature_linear(h)
+            h = torch.cat([feature, input_views], -1)
+
+            for i, l in enumerate(self.views_linears):
+                h = self.views_linears[i](h)
+                h = F.relu(h)
+
+            rgb = torch.sigmoid(self.rgb_linear(h))
+            outputs = torch.cat([rgb, alpha], -1)
+        else:
+            outputs = self.output_linear(h)
+
+        return outputs
 
 class MVSNeRF(nn.Module):
     def __init__(self, D=8, W=256, input_ch_pts=3, input_ch_views=3, input_ch_feat=8, skips=[4], net_type='v2'):
@@ -358,11 +551,16 @@ class MVSNeRF(nn.Module):
                      input_ch=input_ch_pts, output_ch=4, skips=skips,
                      input_ch_views=input_ch_views, use_viewdirs=True)
         elif 'v1' == net_type:
-            self.nerf = Renderer_color_fusion(D=D, W=W,input_ch_feat=input_ch_feat,
+            self.nerf = Renderer_attention(D=D, W=W,input_ch_feat=input_ch_feat,
+                     input_ch=input_ch_pts, output_ch=4, skips=skips,
+                     input_ch_views=input_ch_views, use_viewdirs=True)
+        elif 'v2' == net_type:
+            self.nerf = Renderer_linear(D=D, W=W,input_ch_feat=input_ch_feat,
                      input_ch=input_ch_pts, output_ch=4, skips=skips,
                      input_ch_views=input_ch_views, use_viewdirs=True)
 
-
+    def forward_alpha(self, x):
+        return self.nerf.forward_alpha(x)
 
     def forward(self, x):
         RGBA = self.nerf(x)
@@ -431,8 +629,8 @@ def create_nerf_mvs(args, pts_embedder=True, use_mvs=False, dir_embedder=True):
             EncodingNet.load_state_dict(state_dict)
 
         model.load_state_dict(ckpt['network_fn_state_dict'])
-        if model_fine is not None:
-            model_fine.load_state_dict(ckpt['network_fine_state_dict'])
+        # if model_fine is not None:
+        #     model_fine.load_state_dict(ckpt['network_fine_state_dict'])
 
     ##########################
 
@@ -454,7 +652,6 @@ def create_nerf_mvs(args, pts_embedder=True, use_mvs=False, dir_embedder=True):
     render_kwargs_test['perturb'] = False
 
     return render_kwargs_train, render_kwargs_test, start, grad_vars
-
 
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -554,6 +751,7 @@ class CostRegNet(nn.Module):
                                stride=2, bias=False),
             norm_act(8))
 
+        # self.conv12 = nn.Conv3d(8, 8, 3, stride=1, padding=1, bias=True)
 
     def forward(self, x):
         conv0 = self.conv0(x)
@@ -567,6 +765,7 @@ class CostRegNet(nn.Module):
         del conv2
         x = conv0 + self.conv11(x)
         del conv0
+        # x = self.conv12(x)
         return x
 
 class MVSNet(nn.Module):
@@ -583,48 +782,9 @@ class MVSNet(nn.Module):
         self.N_importance = 0
         self.chunk = 1024
 
-        self.cost_reg_2 = CostRegNet(32 + 9, norm_act)
+        self.cost_reg_2 = CostRegNet(32+9, norm_act)
 
-
-    def build_volume_costvar(self, feats, proj_mats, depth_values, pad=0, idx=[0,1,2]):
-        # feats: (B, V, C, H, W)
-        # proj_mats: (B, V, 3, 4)
-        # depth_values: (B, D, H, W)
-        # cost_reg: nn.Module of input (B, C, D, h, w) and output (B, 1, D, h, w)
-        # volume_sum [B, G, D, h, w]
-        # prob_volume [B D H W]
-        # volume_feature [B C D H W]
-
-
-        D = depth_values.shape[1]
-        ref_feats, src_feats  = feats[:, idx[0]], feats[:, idx[1:]]
-        src_feats = src_feats.permute(1, 0, 2, 3, 4)  # (V-1, B, C, h, w)
-        if proj_mats.dim() == 5:
-            proj_mats = (proj_mats[0,0,idx[1:]] @ proj_mats[1,0,idx[0]])[None,:,:3]
-        else:
-            proj_mats = proj_mats[:, idx[1:]]
-        proj_mats = proj_mats.permute(1, 0, 2, 3)  # (V-1, B, 3, 4)
-
-
-        if pad>0:
-            ref_feats = F.pad(ref_feats, (pad,pad,pad,pad), "constant", 0)
-
-
-        source_volume = []
-        source_volume.append(ref_feats.unsqueeze(2).repeat(1, 1, D, 1, 1))  # (B, C, D, h, w))
-        for src_feat, proj_mat in zip(src_feats, proj_mats):
-            warped_volume, src_grid = homo_warp(src_feat, proj_mat, depth_values, pad=pad)
-            source_volume.append(warped_volume)
-
-
-        cost_var = torch.cat(source_volume, dim=0)
-        del source_volume
-        cost_var = torch.cat((cost_var, torch.mean(cost_var**2, dim=0, keepdim=True)-torch.mean(cost_var, dim=0, keepdim=True)**2),dim=0)
-        cost_var = cost_var.view(1,-1,*cost_var.shape[2:])
-        return cost_var
-
-
-    def build_volume_costvar_img(self, imgs, feats, proj_mats, depth_values, pad=0, idx=[0,1,2]):
+    def build_volume_costvar(self, feats, proj_mats, depth_values, pad=0):
         # feats: (B, V, C, H, W)
         # proj_mats: (B, V, 3, 4)
         # depth_values: (B, D, H, W)
@@ -635,19 +795,14 @@ class MVSNet(nn.Module):
 
         B, V, C, H, W = feats.shape
         D = depth_values.shape[1]
-        ref_feats, src_feats = feats[:, idx[0]], feats[:, idx[1:]]
+
+        ref_feats, src_feats = feats[:, 0], feats[:, 1:]
         src_feats = src_feats.permute(1, 0, 2, 3, 4)  # (V-1, B, C, h, w)
-        proj_mats = proj_mats[:, idx[1:]]
+        proj_mats = proj_mats[:, 1:]
         proj_mats = proj_mats.permute(1, 0, 2, 3)  # (V-1, B, 3, 4)
 
-
-        if pad>0:
-            ref_feats = F.pad(ref_feats, (pad,pad,pad,pad), "constant", 0)
-
-        img_feat = torch.empty((B, 9 +32, D, *ref_feats.shape[-2:]), device=feats.device, dtype=torch.float)
-        imgs = F.interpolate(imgs.view(B*V,*imgs.shape[2:]),(H,W),mode='bilinear',align_corners=False).view(B,V,-1,H,W).permute(1,0,2,3,4)
-        img_feat[:,:3,:,pad:H+pad,pad:W+pad] = imgs[idx[0]].unsqueeze(2).expand(-1,-1,D,-1,-1)
-
+        if pad > 0:
+            ref_feats = F.pad(ref_feats, (pad, pad, pad, pad), "constant", 0)
 
         ref_volume = ref_feats.unsqueeze(2).repeat(1, 1, D, 1, 1)  # (B, C, D, h, w)
 
@@ -656,15 +811,14 @@ class MVSNet(nn.Module):
 
         del ref_feats
 
-        count = torch.ones((B, 1, D, H + pad * 2, W + pad * 2), device=volume_sum.device)
-        for i,(src_img, src_feat, proj_mat) in enumerate(zip(imgs[idx[1:]], src_feats, proj_mats)):
+        in_masks = torch.ones((B, 1, D, H + pad * 2, W + pad * 2), device=volume_sum.device)
+        for i, (src_feat, proj_mat) in enumerate(zip(src_feats, proj_mats)):
             warped_volume, grid = homo_warp(src_feat, proj_mat, depth_values, pad=pad)
-            img_feat[:,(i+1)*3:(i+2)*3], _ = homo_warp(src_img, proj_mat, depth_values, src_grid=grid, pad=pad)
 
             grid = grid.view(B, 1, D, H + pad * 2, W + pad * 2, 2)
-            in_mask = ((grid >-1.0)*(grid < 1.0))
-            in_mask = (in_mask[...,0]*in_mask[...,1])
-            count += in_mask.float()
+            in_mask = ((grid > -1.0) * (grid < 1.0))
+            in_mask = (in_mask[..., 0] * in_mask[..., 1])
+            in_masks += in_mask.float()
 
             if self.training:
                 volume_sum = volume_sum + warped_volume
@@ -676,14 +830,69 @@ class MVSNet(nn.Module):
             del warped_volume, src_feat, proj_mat
         del src_feats, proj_mats
 
-        count = 1.0 / count
+        count = 1.0 / in_masks
+        img_feat = volume_sq_sum * count - (volume_sum * count) ** 2
+        del volume_sq_sum, volume_sum, count
+
+        return img_feat, in_masks
+
+    def build_volume_costvar_img(self, imgs, feats, proj_mats, depth_values, pad=0):
+        # feats: (B, V, C, H, W)
+        # proj_mats: (B, V, 3, 4)
+        # depth_values: (B, D, H, W)
+        # cost_reg: nn.Module of input (B, C, D, h, w) and output (B, 1, D, h, w)
+        # volume_sum [B, G, D, h, w]
+        # prob_volume [B D H W]
+        # volume_feature [B C D H W]
+
+        B, V, C, H, W = feats.shape
+        D = depth_values.shape[1]
+        ref_feats, src_feats = feats[:, 0], feats[:, 1:]
+        src_feats = src_feats.permute(1, 0, 2, 3, 4)  # (V-1, B, C, h, w)
+        proj_mats = proj_mats[:, 1:]
+        proj_mats = proj_mats.permute(1, 0, 2, 3)  # (V-1, B, 3, 4)
+
+        if pad > 0:
+            ref_feats = F.pad(ref_feats, (pad, pad, pad, pad), "constant", 0)
+
+        img_feat = torch.empty((B, 9 + 32, D, *ref_feats.shape[-2:]), device=feats.device, dtype=torch.float)
+        imgs = F.interpolate(imgs.view(B * V, *imgs.shape[2:]), (H, W), mode='bilinear', align_corners=False).view(B, V,-1,H,W).permute(1, 0, 2, 3, 4)
+        img_feat[:, :3, :, pad:H + pad, pad:W + pad] = imgs[0].unsqueeze(2).expand(-1, -1, D, -1, -1)
+
+        ref_volume = ref_feats.unsqueeze(2).repeat(1, 1, D, 1, 1)  # (B, C, D, h, w)
+
+        volume_sum = ref_volume
+        volume_sq_sum = ref_volume ** 2
+
+        del ref_feats
+
+        in_masks = torch.ones((B, V, D, H + pad * 2, W + pad * 2), device=volume_sum.device)
+        for i, (src_img, src_feat, proj_mat) in enumerate(zip(imgs[1:], src_feats, proj_mats)):
+            warped_volume, grid = homo_warp(src_feat, proj_mat, depth_values, pad=pad)
+            img_feat[:, (i + 1) * 3:(i + 2) * 3], _ = homo_warp(src_img, proj_mat, depth_values, src_grid=grid, pad=pad)
+
+            grid = grid.view(B, 1, D, H + pad * 2, W + pad * 2, 2)
+            in_mask = ((grid > -1.0) * (grid < 1.0))
+            in_mask = (in_mask[..., 0] * in_mask[..., 1])
+            in_masks[:, i + 1] = in_mask.float()
+
+            if self.training:
+                volume_sum = volume_sum + warped_volume
+                volume_sq_sum = volume_sq_sum + warped_volume ** 2
+            else:
+                volume_sum += warped_volume
+                volume_sq_sum += warped_volume.pow_(2)
+
+            del warped_volume, src_feat, proj_mat
+        del src_feats, proj_mats
+
+        count = 1.0 / torch.sum(in_masks, dim=1, keepdim=True)
         img_feat[:, -32:] = volume_sq_sum * count - (volume_sum * count) ** 2
         del volume_sq_sum, volume_sum, count
 
-        return img_feat
+        return img_feat, in_masks
 
-
-    def forward(self, imgs, proj_mats, near_far, pad=0, idx=[0,1,2]):
+    def forward(self, imgs, proj_mats, near_far, pad=0,  return_color=False, lindisp=False):
         # imgs: (B, V, 3, H, W)
         # proj_mats: (B, V, 3, 4) from fine to coarse
         # init_depth_min, depth_interval: (B) or float
@@ -696,25 +905,27 @@ class MVSNet(nn.Module):
 
         imgs = imgs.view(B, V, 3, H, W)
 
-        l = 0
-        level = 2 - l
+
         feats_l = feats  # (B*V, C, h, w)
 
         feats_l = feats_l.view(B, V, *feats_l.shape[1:])  # (B, V, C, h, w)
 
 
         D = 128
-        init_depth_min = near_far[0]  # assume batch size==1
-        depth_interval_l = near_far[1] - near_far[0]
-        depth_values = init_depth_min + \
-                       depth_interval_l * \
-                       torch.linspace(0., 1., steps=D,
-                                    device=imgs.device,
-                                    dtype=imgs.dtype) # (B, D)
-        depth_values = depth_values.unsqueeze(0)
+        t_vals = torch.linspace(0., 1., steps=D, device=imgs.device, dtype=imgs.dtype)  # (B, D)
+        near, far = near_far  # assume batch size==1
+        if not lindisp:
+            depth_values = near * (1.-t_vals) + far * (t_vals)
+        else:
+            depth_values = 1. / (1. / near * (1. - t_vals) + 1. / far * (t_vals))
 
-        volume_feat = self.build_volume_costvar_img(imgs, feats_l, proj_mats, depth_values, pad=pad, idx=idx)
-        # volume_feat = self.build_volume_costvar(feats_l, proj_mats, depth_values, pad=pad, idx=idx)
+        depth_values = depth_values.unsqueeze(0)
+        # volume_feat, in_masks = self.build_volume_costvar(feats_l, proj_mats, depth_values, pad=pad)
+        volume_feat, in_masks = self.build_volume_costvar_img(imgs, feats_l, proj_mats, depth_values, pad=pad)
+        if return_color:
+            feats_l = torch.cat((volume_feat[:,:V*3].view(B, V, 3, *volume_feat.shape[2:]),in_masks.unsqueeze(2)),dim=2)
+
+
         volume_feat = self.cost_reg_2(volume_feat)  # (B, 1, D, h, w)
         volume_feat = volume_feat.reshape(1,-1,*volume_feat.shape[2:])
 

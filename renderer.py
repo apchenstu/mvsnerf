@@ -10,9 +10,9 @@ def depth2dist(z_vals, cos_angle):
     dists = dists * cos_angle.unsqueeze(-1)
     return dists
 
-def ndc2dist(ndc_pts):
+def ndc2dist(ndc_pts, cos_angle):
     dists = torch.norm(ndc_pts[:, 1:] - ndc_pts[:, :-1], dim=-1)
-    dists = torch.cat([dists, torch.Tensor([1e10]).to(ndc_pts.device).expand(dists[..., :1].shape)], -1)  # [N_rays, N_samples]
+    dists = torch.cat([dists, 1e10*cos_angle.unsqueeze(-1)], -1)  # [N_rays, N_samples]
     return dists
 
 def raw2alpha(sigma, dist, net_type):
@@ -121,41 +121,48 @@ def gen_dir_feature(w2c_ref, rays_dir):
     dirs = rays_dir @ w2c_ref[:3,:3].t() # [N_rays, 3]
     return dirs
 
-def gen_pts_feats(imgs, volume_feature, rays_pts, pose_ref, rays_ndc, feat_dim, use_color_volume=False, net_type='v0'):
+def gen_pts_feats(imgs, volume_feature, rays_pts, pose_ref, rays_ndc, feat_dim, img_feat=None, img_downscale=1.0, use_color_volume=False, net_type='v0'):
     N_rays, N_samples = rays_pts.shape[:2]
+    if img_feat is not None:
+        feat_dim += img_feat.shape[1]*img_feat.shape[2]
+
     if not use_color_volume:
         input_feat = torch.empty((N_rays, N_samples, feat_dim), device=imgs.device, dtype=torch.float)
         ray_feats = index_point_feature(volume_feature, rays_ndc) if torch.is_tensor(volume_feature) else volume_feature(rays_ndc)
         input_feat[..., :8] = ray_feats
-        input_feat[..., 8:] = build_color_volume(rays_pts, pose_ref, imgs[:, :3], with_mask=True)
+        input_feat[..., 8:] = build_color_volume(rays_pts, pose_ref, imgs, img_feat, with_mask=True, downscale=img_downscale)
     else:
         input_feat = index_point_feature(volume_feature, rays_ndc) if torch.is_tensor(volume_feature) else volume_feature(rays_ndc)
     return input_feat
 
 def rendering(args, pose_ref, rays_pts, rays_ndc, depth_candidates, rays_o, rays_dir,
-              volume_feature=None, imgs=None, network_fn=None, network_fine=None, network_query_fn=None, white_bkgd=False, **kwargs):
+              volume_feature=None, imgs=None, network_fn=None, img_feat=None, network_query_fn=None, white_bkgd=False, **kwargs):
 
     # rays angle
     cos_angle = torch.norm(rays_dir, dim=-1)
 
-    if 'v0' == args.net_type:
-        # using direction
+
+    # using direction
+    if pose_ref is not None:
         angle = gen_dir_feature(pose_ref['w2cs'][0], rays_dir/cos_angle.unsqueeze(-1))  # view dir feature
     else:
-        # using angle distance
-        angle = gen_angle_feature(pose_ref['c2ws'], rays_pts, rays_dir / cos_angle.unsqueeze(-1))  # angle feature
+        angle = rays_dir/cos_angle.unsqueeze(-1)
 
     # rays_pts
-    input_feat = gen_pts_feats(imgs, volume_feature, rays_pts, pose_ref, rays_ndc, args.feat_dim, args.use_color_volume, args.net_type)
+    input_feat = gen_pts_feats(imgs, volume_feature, rays_pts, pose_ref, rays_ndc, args.feat_dim, \
+                               img_feat, args.img_downscale, args.use_color_volume, args.net_type)
 
+    # rays_ndc = rays_ndc * 2 - 1.0
     raw = network_query_fn(rays_ndc, angle, input_feat, network_fn)
+    if raw.shape[-1]>4:
+        input_feat = torch.cat((input_feat[...,:8],raw[...,4:]), dim=-1)
 
     dists = depth2dist(depth_candidates, cos_angle)
     # dists = ndc2dist(rays_ndc)
     rgb_map, disp_map, acc_map, weights, depth_map, alpha = raw2outputs(raw, depth_candidates, dists, white_bkgd,args.net_type)
     ret = {}
 
-    return rgb_map, disp_map, acc_map, depth_map, alpha, ret
+    return rgb_map, input_feat, weights, depth_map, alpha, ret
 
 def render_density(network_fn, rays_pts, density_feature,  network_query_fn, chunk=1024 * 5):
     densities = []

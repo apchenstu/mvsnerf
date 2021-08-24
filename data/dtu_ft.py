@@ -9,7 +9,7 @@ from torchvision import transforms as T
 from .ray_utils import *
 
 class DTU_ft(Dataset):
-    def __init__(self, args, split='train'):
+    def __init__(self, args, split='train', load_ref=False):
         """
         img_wh should be set to a tuple ex: (1152, 864) to enable test mode!
         """
@@ -27,7 +27,14 @@ class DTU_ft(Dataset):
 
         self.scale_factor = 1.0 / 200
         self.define_transforms()
-        self.read_meta()
+
+        self.pair_idx = torch.load('configs/pairs.th')
+        self.pair_idx = [self.pair_idx['dtu_train'],self.pair_idx['dtu_test']]
+        self.bbox_3d = torch.tensor([[-1.0, -1.0, 2.2], [1.0, 1.0, 4.2]])
+        self.near_far = [2.125, 4.525]
+
+        if not load_ref:
+            self.read_meta()
 
     def define_transforms(self):
         self.transform = T.ToTensor()
@@ -71,7 +78,7 @@ class DTU_ft(Dataset):
 
         # if do not specify source views, load index from pairing file
         if pair_idx is None:
-            pair_idx = torch.load('configs/pairs.th')[f'dtu_train'][:3]
+            pair_idx = self.pair_idx[0][:3]
             # print(f'====> ref idx: {pair_idx}')
 
         imgs, proj_mats = [], []
@@ -111,22 +118,27 @@ class DTU_ft(Dataset):
         proj_mats = torch.from_numpy(np.stack(proj_mats)[:,:3]).float().unsqueeze(0).to(device)
         return imgs, proj_mats, near_far_source, pose_source
 
-    def read_poses_all(self):
+    def load_poses_all(self):
         c2ws = []
         List = sorted(os.listdir(os.path.join(self.root_dir, f'Cameras/train/')))
         for item in List:
             proj_mat_filename = os.path.join(self.root_dir, f'Cameras/train/{item}')
             intrinsic, w2c, near_far = self.read_cam_file(proj_mat_filename)
+            intrinsic[:2] *= 4
             c2ws.append(np.linalg.inv(w2c))
+        self.focal = [intrinsic[0, 0], intrinsic[1, 1]]
         return np.stack(c2ws)
 
     def read_meta(self):
 
         # sub select training views from pairing file
         if os.path.exists('configs/pairs.th'):
-            name = os.path.basename(self.root_dir)
-            self.img_idx = torch.load('configs/pairs.th')[f'{name}_{self.split}']
+            self.img_idx = self.pair_idx[0] if 'train'==self.split else self.pair_idx[1]
             print(f'===> {self.split}ing index: {self.img_idx}')
+
+        # name = os.path.basename(self.root_dir)
+        # test_idx = torch.load('configs/pairs.th')[f'{name}_test']
+        # self.img_idx = test_idx if self.split!='train' else np.delete(np.arange(0,49),test_idx)
 
         w, h = self.img_wh
 
@@ -161,7 +173,8 @@ class DTU_ft(Dataset):
             # ray directions for all pixels, same for all images (same H, W, focal)
             intrinsic[:2] *= 4
             center = [intrinsic[0,2], intrinsic[1,2]]
-            self.directions = get_ray_directions(h, w, [intrinsic[0,0], intrinsic[1,1]], center)  # (h, w, 3)
+            self.focal = [intrinsic[0,0], intrinsic[1,1]]
+            self.directions = get_ray_directions(h, w, self.focal, center)  # (h, w, 3)
             rays_o, rays_d = get_rays(self.directions, c2w)  # both (h*w, 3)
 
             self.all_rays += [torch.cat([rays_o, rays_d,
@@ -186,6 +199,11 @@ class DTU_ft(Dataset):
 
     def __getitem__(self, idx):
         if self.split == 'train':  # use data in the buffers
+            # view, ray_idx = torch.randint(0,len(self.all_rays),(1,)), torch.randperm(self.all_rays.shape[1])[:self.args.batch_size]
+            # sample = {'rays': self.all_rays[view,ray_idx],
+            #           'rgbs': self.all_rgbs[view,ray_idx]}
+
+
             sample = {'rays': self.all_rays[idx],
                       'rgbs': self.all_rgbs[idx]}
 
@@ -198,6 +216,6 @@ class DTU_ft(Dataset):
             sample = {'rays': rays,
                       'rgbs': img,
                       'depth': depth}
-
+        sample['idx'] = idx
         return sample
 

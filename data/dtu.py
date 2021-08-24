@@ -7,6 +7,16 @@ import cv2
 from PIL import Image
 import torch
 from torchvision import transforms as T
+import torchvision.transforms.functional as F
+
+def colorjitter(img, factor):
+    # brightness_factor,contrast_factor,saturation_factor,hue_factor
+    # img = F.adjust_brightness(img, factor[0])
+    # img = F.adjust_contrast(img, factor[1])
+    img = F.adjust_saturation(img, factor[2])
+    img = F.adjust_hue(img, factor[3]-1.0)
+
+    return img
 
 
 class MVSDatasetDTU(Dataset):
@@ -35,8 +45,8 @@ class MVSDatasetDTU(Dataset):
 
     def define_transforms(self):
         self.transform = T.Compose([T.ToTensor(),
-                                    T.Normalize(mean=[0.485, 0.456, 0.406],
-                                                std=[0.229, 0.224, 0.225]),
+                                    # T.Normalize(mean=[0.485, 0.456, 0.406],
+                                    #             std=[0.229, 0.224, 0.225]),
                                     ])
 
     def build_metas(self):
@@ -175,6 +185,10 @@ class MVSDatasetDTU(Dataset):
             near_fars.append(near_far)
 
         imgs = torch.stack(imgs).float()
+        # if self.split == 'train':
+        #     imgs = colorjitter(imgs, 1.0+(torch.rand((4,))*2-1.0)*0.5)
+        # imgs = F.normalize(imgs,mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+
         depths_h = np.stack(depths_h)
         proj_mats = np.stack(proj_mats)[:, :3]
         affine_mat, affine_mat_inv = np.stack(affine_mat), np.stack(affine_mat_inv)

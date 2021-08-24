@@ -1,5 +1,6 @@
 import torch
 import numpy as np
+from renderer import ndc2dist
 from torch import searchsorted
 from kornia import create_meshgrid
 
@@ -139,14 +140,20 @@ def sample_pdf(bins, weights, N_samples, det=False, pytest=False):
 
     return samples
 
+def dda(rays_o, rays_d, bbox_3D):
+    inv_ray_d = 1.0/(rays_d+1e-6)
+    t_min = (bbox_3D[:1] - rays_o)*inv_ray_d # N_rays 3
+    t_max = (bbox_3D[1:] - rays_o)*inv_ray_d
+    t = torch.stack((t_min,t_max)) # 2 N_rays 3
+    t_min = torch.max(torch.min(t, dim=0)[0],dim=-1, keepdim=True)[0]
+    t_max = torch.min(torch.max(t, dim=0)[0],dim=-1, keepdim=True)[0]
+    return t_min, t_max
 
 def ray_marcher(rays,
                 N_samples=64,
-                use_disp=False,
+                lindisp=False,
                 perturb=0,
-                bbox_3D=None,
-                N_importance=64,
-                density_volume=None):
+                bbox_3D=None):
     """
     sample points along the rays
     Inputs:
@@ -161,9 +168,13 @@ def ray_marcher(rays,
     rays_o, rays_d = rays[:, 0:3], rays[:, 3:6]  # both (N_rays, 3)
     near, far = rays[:, 6:7], rays[:, 7:8]  # both (N_rays, 1)
 
+    if bbox_3D is not None:
+        # cal aabb boundles
+        near, far = dda(rays_o, rays_d, bbox_3D)
+
     # Sample depth points
     z_steps = torch.linspace(0, 1, N_samples, device=rays.device)  # (N_samples)
-    if not use_disp:  # use linear sampling in depth space
+    if not lindisp:  # use linear sampling in depth space
         z_vals = near * (1 - z_steps) + far * z_steps
     else:  # use linear sampling in disparity space
         z_vals = 1 / (1 / near * (1 - z_steps) + 1 / far * z_steps)
@@ -182,25 +193,32 @@ def ray_marcher(rays,
     xyz_coarse_sampled = rays_o.unsqueeze(1) + \
                          rays_d.unsqueeze(1) * z_vals.unsqueeze(2)  # (N_rays, N_samples, 3)
 
-    # sampling base on the density volume
-    if density_volume is not None and N_importance > 0:
 
-        pts_NDC = (xyz_coarse_sampled - bbox_3D[0].view(3, 1, 1)) / (bbox_3D[1] - bbox_3D[0]).view(3, 1, 1)
-        raw = index_point_feature(density_volume[None, None], pts_NDC.permute(1, 2, 0))
+    return xyz_coarse_sampled, rays_o, rays_d, z_vals
 
-        cos_angle = torch.norm(rays_d, dim=0).unsqueeze(1)
-        dists = depth2dist(z_vals, cos_angle)
-        alpha = 1. - torch.exp(-torch.relu(raw) * dists)  # *5e-3
-        weights = alpha * torch.cumprod(
-            torch.cat([torch.ones(alpha.shape[0], 1).to(alpha.device), 1. - alpha + 1e-10], -1), -1)[:, :-1]
+def ray_marcher_fine(rays,
+                density_volume,
+                z_vals,
+                pts_NDC,
+                N_importance=64,
+                lindisp=False):
 
 
-        z_samples = sample_pdf(z_vals, weights, N_importance).detach()
-        z_vals = torch.sort(torch.cat([z_samples, z_vals], -1), -1)[0]
+    rays_o, rays_d = rays[:, 0:3], rays[:, 3:6]  # both (N_rays, 3)
 
+    pts_NDC = pts_NDC*2-1.0
+    sigma = index_point_feature(density_volume[None,None], pts_NDC)
+
+    alpha = 1. - torch.exp(-torch.relu(sigma))  # *5e-3
+    weights = alpha * torch.cumprod(
+        torch.cat([torch.ones(alpha.shape[0], 1).to(alpha.device), 1. - alpha + 1e-10], -1), -1)[:, :-1]
+
+    z_vals_mid = 0.5 * (z_vals[:, :-1] + z_vals[:, 1:])
+    z_samples = sample_pdf(z_vals_mid, weights[:, 1:-1], N_importance).detach()
+
+    z_vals = torch.sort(torch.cat([z_samples, z_vals], -1), -1)[0]
 
     xyz_coarse_sampled = rays_o.unsqueeze(1) + \
                          rays_d.unsqueeze(1) * z_vals.unsqueeze(2)  # (N_rays, N_samples, 3)
-
 
     return xyz_coarse_sampled, rays_o, rays_d, z_vals

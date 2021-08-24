@@ -1,6 +1,6 @@
 # MVSNeRF
 ## [Project page](https://apchenstu.github.io/mvsnerf/) |  [Paper](https://arxiv.org/abs/2103.15595)
-This repository contains a pytorch lightning implementation for the paper: [MVSNeRF: Fast Generalizable Radiance Field Reconstruction from Multi-View Stereo](https://arxiv.org/abs/1911.11530). Our work present a novel neural rendering approach that can efficiently reconstruct
+This repository contains a pytorch lightning implementation for the ICCV 2021 paper: [MVSNeRF: Fast Generalizable Radiance Field Reconstruction from Multi-View Stereo](https://arxiv.org/abs/1911.11530). Our work present a novel neural rendering approach that can efficiently reconstruct
 geometric and neural radiance fields for view synthesis, Moreover, if dense images are captured, our estimated radiance field representation can be easily fine-tuned; this leads to fast per-scene reconstruction.<br><br>
 
 ![Pipeline](configs/pipeline.png)
@@ -64,7 +64,9 @@ for 6 epochs.
 *Checkpoint*: a pre-trained checkpint is included in `ckpts/mvsnerf-v0.tar`. 
 
 *Evaluation*: We also provide a rendering and quantity scipt  in `renderer.ipynb`, 
-and you can also use the run_batch.py if you want to testing or finetuning on different dataset.
+and you can also use the run_batch.py if you want to testing or finetuning on different dataset. More results can be found from
+[Here](https://drive.google.com/drive/folders/1ko8OW38iDtj4fHvX0e3Wom9YvtJNTSXu?usp=sharing),
+please check your configuration if your rendering result looks absnormal.
 
 Rendering from the trained model should have result like this:
 
@@ -141,7 +143,6 @@ If you find our code or paper helps, please consider citing:
   author={Chen, Anpei and Xu, Zexiang and Zhao, Fuqiang and Zhang, Xiaoshuai and Xiang, Fanbo and Yu, Jingyi and Su, Hao},
   journal={arXiv preprint arXiv:2103.15595},
   year={2021}
-}
 }
 ```
 

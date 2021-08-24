@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="ChangeListManager">
+    <list default="true" id="cd73577c-0900-4cb1-b704-ce6ac60f53fc" name="Default Changelist" comment="" />
+    <option name="SHOW_DIALOG" value="false" />
+    <option name="HIGHLIGHT_CONFLICTS" value="true" />
+    <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
+    <option name="LAST_RESOLUTION" value="IGNORE" />
+  </component>
+  <component name="JupyterTrust" id="64bfd5ca-95f8-4d37-b136-b908511c47e4" />
+  <component name="ProjectId" id="1vsv7C9wS2vBo83KmbQJDPlgV5l" />
+  <component name="ProjectViewState">
+    <option name="hideEmptyMiddlePackages" value="true" />
+    <option name="showExcludedFiles" value="true" />
+    <option name="showLibraryContents" value="true" />
+  </component>
+  <component name="PropertiesComponent">
+    <property name="RunOnceActivity.ShowReadmeOnStart" value="true" />
+    <property name="WebServerToolWindowFactoryState" value="false" />
+    <property name="last_opened_file_path" value="$PROJECT_DIR$/data" />
+    <property name="settings.editor.selected.configurable" value="web.server" />
+  </component>
+  <component name="RecentsManager">
+    <key name="MoveFile.RECENT_KEYS">
+      <recent name="F:\dgene\MVS-Nerf\code\release\mvsnerf" />
+    </key>
+    <key name="CopyFile.RECENT_KEYS">
+      <recent name="F:\dgene\MVS-Nerf\code\release\mvsnerf\data" />
+    </key>
+  </component>
+  <component name="ServiceViewManager">
+    <option name="viewStates">
+      <list>
+        <serviceView>
+          <treeState>
+            <expand />
+            <select />
+          </treeState>
+        </serviceView>
+      </list>
+    </option>
+  </component>
+  <component name="SvnConfiguration">
+    <configuration />
+  </component>
+  <component name="TaskManager">
+    <task active="true" id="Default" summary="Default task">
+      <changelist id="cd73577c-0900-4cb1-b704-ce6ac60f53fc" name="Default Changelist" comment="" />
+      <created>1627363440639</created>
+      <option name="number" value="Default" />
+      <option name="presentableId" value="Default" />
+      <updated>1627363440639</updated>
+      <workItem from="1627363481828" duration="93742000" />
+      <workItem from="1628639909322" duration="28261000" />
+      <workItem from="1629767563177" duration="2659000" />
+    </task>
+    <servers />
+  </component>
+  <component name="TypeScriptGeneratedFilesManager">
+    <option name="version" value="1" />
+  </component>
+  <component name="WindowStateProjectService">
+    <state x="800" y="265" key="#Illuminated_Cloud" timestamp="1629769272515">
+      <screen x="90" y="0" width="2470" height="1440" />
+    </state>
+    <state x="2472" y="199" key="#Illuminated_Cloud/90.0.1830.1080/1920.0.1920.1080@1920.0.1920.1080" timestamp="1627363530186" />
+    <state x="616" y="199" key="#Illuminated_Cloud/90.0.1830.1080@90.0.1830.1080" timestamp="1628639914914" />
+    <state x="800" y="265" key="#Illuminated_Cloud/90.0.2470.1440@90.0.2470.1440" timestamp="1629769272515" />
+    <state x="2381" y="183" key="SettingsEditor" timestamp="1627363749522">
+      <screen x="1920" y="0" width="1920" height="1080" />
+    </state>
+    <state x="2381" y="183" key="SettingsEditor/90.0.1830.1080/1920.0.1920.1080@1920.0.1920.1080" timestamp="1627363749522" />
+    <state x="891" y="313" key="search.everywhere.popup" timestamp="1628308436574">
+      <screen x="90" y="0" width="2470" height="1440" />
+    </state>
+    <state x="2543" y="235" key="search.everywhere.popup/90.0.1830.1080/1920.0.1920.1080@1920.0.1920.1080" timestamp="1627618989270" />
+    <state x="891" y="313" key="search.everywhere.popup/90.0.2470.1440@90.0.2470.1440" timestamp="1628308436574" />
+  </component>
+</project>

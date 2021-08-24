@@ -7,7 +7,7 @@ from data import dataset_dict
 from models import *
 from renderer import *
 from utils import *
-from data.ray_utils import ray_marcher
+from data.ray_utils import ray_marcher,ray_marcher_fine
 
 import imageio
 
@@ -61,7 +61,7 @@ class MVSSystem(LightningModule):
         if 'volume' not in ckpts.keys():
             self.MVSNet.train()
             with torch.no_grad():
-                volume_feature, _, _ = self.MVSNet(self.imgs, self.proj_mats, self.near_far_source, pad=args.pad)
+                volume_feature, _, _ = self.MVSNet(self.imgs, self.proj_mats, self.near_far_source, pad=args.pad, lindisp=args.use_disp)
         else:
             volume_feature = ckpts['volume']['feat_volume']
             print('load ckpt volume.')
@@ -75,18 +75,18 @@ class MVSSystem(LightningModule):
             intrinsic[:2] /= 4
             vox_pts = get_ptsvolume(H-2*args.pad,W-2*args.pad,D, args.pad,  self.near_far_source, intrinsic, c2w)
 
+            self.color_feature = build_color_volume(vox_pts, self.pose_source, self.imgs, with_mask=True).view(D,H,W,-1).unsqueeze(0).permute(0, 4, 1, 2, 3)  # [N,D,H,W,C]
             if args.use_color_volume:
-                color_feature = build_color_volume(vox_pts, self.pose_source, self.imgs, with_mask=True).view(D,H,W,-1).unsqueeze(0)  # [N,D,H,W,C]
-                volume_feature = torch.cat((volume_feature, color_feature.permute(0, 4, 1, 2, 3)),dim=1) # [N,C,D,H,W]
-                del color_feature
+                volume_feature = torch.cat((volume_feature, self.color_feature),dim=1) # [N,C,D,H,W]
 
             if args.use_density_volume:
                 self.vox_pts = vox_pts
+
             else:
                 del vox_pts
 
-        # volume_feature = torch.rand_like(volume_feature)#!!!!!!!!!!!!!!!!!! abalation
         self.volume = RefVolume(volume_feature.detach()).to(device)
+        del volume_feature
 
     def update_density_volume(self):
         with torch.no_grad():
@@ -94,13 +94,13 @@ class MVSSystem(LightningModule):
             network_query_fn = self.render_kwargs_train['network_query_fn']
 
             D,H,W = self.volume.feat_volume.shape[-3:]
-            features = self.volume.feat_volume.permute(0,2,3,4,1).reshape(D*H,W,-1)
+            features = torch.cat((self.volume.feat_volume, self.color_feature), dim=1).permute(0,2,3,4,1).reshape(D*H,W,-1)
             self.density_volume = render_density(network_fn, self.vox_pts, features, network_query_fn).reshape(D,H,W)
         del features
 
     def decode_batch(self, batch):
-        rays = batch['rays']  # (B, 8)
-        rgbs = batch['rgbs']  # (B, 3)
+        rays = batch['rays'].squeeze()  # (B, 8)
+        rgbs = batch['rgbs'].squeeze()  # (B, 3)
         return rays, rgbs
 
     def unpreprocess(self, data, shape=(1,1,3,1,1)):
@@ -119,11 +119,15 @@ class MVSSystem(LightningModule):
         scheduler = get_scheduler(self.args, self.optimizer)
         return [self.optimizer], [scheduler]
 
+    def get_lr(self):
+        for param_group in self.optimizer.param_groups:
+            return param_group['lr']
+
     def train_dataloader(self):
         return DataLoader(self.train_dataset,
                           shuffle=True,
                           num_workers=8,
-                          batch_size=self.args.batch_size,
+                          batch_size=args.batch_size,
                           pin_memory=True)
 
     def val_dataloader(self):
@@ -140,13 +144,21 @@ class MVSSystem(LightningModule):
         if args.use_density_volume and 0 == self.global_step%200:
             self.update_density_volume()
 
-        xyz_coarse_sampled, rays_o, rays_d, z_vals = ray_marcher(rays, N_samples=args.N_samples, use_disp=args.use_disp, perturb=args.perturb, density_volume=self.density_volume)
+        xyz_coarse_sampled, rays_o, rays_d, z_vals = ray_marcher(rays, N_samples=args.N_samples,
+                        lindisp=args.use_disp, perturb=args.perturb)
 
         # Converting world coordinate to ndc coordinate
         H,W = self.imgs.shape[-2:]
         inv_scale = torch.tensor([W - 1, H - 1]).to(device)
         w2c_ref, intrinsic_ref = self.pose_source['w2cs'][0], self.pose_source['intrinsics'][0]
-        xyz_NDC = get_ndc_coordinate(w2c_ref, intrinsic_ref, xyz_coarse_sampled, inv_scale, near=self.near_far_source[0],far=self.near_far_source[1], pad=args.pad)
+        xyz_NDC = get_ndc_coordinate(w2c_ref, intrinsic_ref, xyz_coarse_sampled, inv_scale, near=self.near_far_source[0],far=self.near_far_source[1], pad=args.pad, lindisp=args.use_disp)
+
+        # important sampleing
+        if self.density_volume is not None and args.N_importance > 0:
+            xyz_coarse_sampled, rays_o, rays_d, z_vals = ray_marcher_fine(rays, self.density_volume, z_vals, xyz_NDC,
+                                                                          N_importance=args.N_importance)
+            xyz_NDC = get_ndc_coordinate(w2c_ref, intrinsic_ref, xyz_coarse_sampled, inv_scale,
+                                         near=self.near_far_source[0], far=self.near_far_source[1], pad=args.pad, lindisp=args.use_disp)
 
         # rendering
         rgbs, disp, acc, depth_pred, alpha, extras = rendering(args, self.pose_source, xyz_coarse_sampled, xyz_NDC, z_vals, rays_o, rays_d,
@@ -181,8 +193,7 @@ class MVSSystem(LightningModule):
 
         self.MVSNet.train()
         rays, img = self.decode_batch(batch)
-        rays = rays.squeeze()  # (H*W, 3)
-        img = img.squeeze().cpu()  # (H, W, 3)
+        img = img.cpu()  # (H, W, 3)
         # mask = batch['mask'][0]
 
         N_rays_all = rays.shape[0]
@@ -196,7 +207,7 @@ class MVSSystem(LightningModule):
             for chunk_idx in range(N_rays_all//args.chunk + int(N_rays_all%args.chunk>0)):
 
                 xyz_coarse_sampled, rays_o, rays_d, z_vals = ray_marcher(rays[chunk_idx*args.chunk:(chunk_idx+1)*args.chunk],
-                                                    N_samples=args.N_samples)
+                                                    N_samples=args.N_samples, lindisp=args.use_disp)
 
                 # Converting world coordinate to ndc coordinate
                 H, W = img.shape[:2]
@@ -204,7 +215,15 @@ class MVSSystem(LightningModule):
                 w2c_ref, intrinsic_ref = self.pose_source['w2cs'][0], self.pose_source['intrinsics'][0].clone()
                 intrinsic_ref[:2] *= args.imgScale_test/args.imgScale_train
                 xyz_NDC = get_ndc_coordinate(w2c_ref, intrinsic_ref, xyz_coarse_sampled, inv_scale,
-                                             near=self.near_far_source[0], far=self.near_far_source[1], pad=args.pad*args.imgScale_test)
+                                             near=self.near_far_source[0], far=self.near_far_source[1], pad=args.pad*args.imgScale_test, lindisp=args.use_disp)
+
+                # important sampleing
+                if self.density_volume is not None and args.N_importance > 0:
+                    xyz_coarse_sampled, rays_o, rays_d, z_vals = ray_marcher_fine(rays[chunk_idx*args.chunk:(chunk_idx+1)*args.chunk],
+                                    self.density_volume, z_vals,xyz_NDC,N_importance=args.N_importance)
+                    xyz_NDC = get_ndc_coordinate(w2c_ref, intrinsic_ref, xyz_coarse_sampled, inv_scale,
+                                    near=self.near_far_source[0], far=self.near_far_source[1],pad=args.pad, lindisp=args.use_disp)
+
 
                 # rendering
                 rgb, disp, acc, depth_pred, alpha, extras = rendering(args, self.pose_source, xyz_coarse_sampled,
