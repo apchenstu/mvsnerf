@@ -15,6 +15,7 @@ def config_parser(cmd=None):
     parser.add_argument('--with_rgb_loss', action='store_true')
     parser.add_argument('--imgScale_train', type=float, default=1.0)
     parser.add_argument('--imgScale_test', type=float, default=1.0)
+    parser.add_argument('--img_downscale', type=float, default=1.0)
     parser.add_argument('--pad', type=int, default=24)
 
     # loader options
@@ -23,8 +24,7 @@ def config_parser(cmd=None):
     parser.add_argument("--pts_dim", type=int, default=3)
     parser.add_argument("--dir_dim", type=int, default=3)
     parser.add_argument("--alpha_feat_dim", type=int, default=8)
-    parser.add_argument('--net_type', type=str, default='v0',
-                        choices=['v0', 'v1'])
+    parser.add_argument('--net_type', type=str, default='v0')
     parser.add_argument('--dataset_name', type=str, default='blender',
                         choices=['dtu', 'blender', 'llff', 'dtu_ft'])
     parser.add_argument('--use_color_volume', default=False, action="store_true",
@@ -55,7 +55,7 @@ def config_parser(cmd=None):
 
     parser.add_argument("--chunk", type=int, default=1024,
                         help='number of rays processed in parallel, decrease if running out of memory')
-    parser.add_argument("--netchunk", type=int, default=1024 * 64,
+    parser.add_argument("--netchunk", type=int, default=1024,
                         help='number of pts sent through network in parallel, decrease if running out of memory')
     parser.add_argument("--ckpt", type=str, default=None,
                         help='specific weights npy file to reload for coarse network')
