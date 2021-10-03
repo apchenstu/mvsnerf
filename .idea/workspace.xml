@@ -3,8 +3,10 @@
   <component name="ChangeListManager">
     <list default="true" id="cd73577c-0900-4cb1-b704-ce6ac60f53fc" name="Default Changelist" comment="">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/configs/pairs.th" beforeDir="false" afterPath="$PROJECT_DIR$/configs/pairs.th" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/opt.py" beforeDir="false" afterPath="$PROJECT_DIR$/opt.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/models.py" beforeDir="false" afterPath="$PROJECT_DIR$/models.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/run_batch.py" beforeDir="false" afterPath="$PROJECT_DIR$/run_batch.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/train_mvs_nerf_finetuning_pl.py" beforeDir="false" afterPath="$PROJECT_DIR$/train_mvs_nerf_finetuning_pl.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/train_mvs_nerf_pl.py" beforeDir="false" afterPath="$PROJECT_DIR$/train_mvs_nerf_pl.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -62,7 +64,8 @@
       <workItem from="1628639909322" duration="28261000" />
       <workItem from="1629767563177" duration="3266000" />
       <workItem from="1629869071704" duration="642000" />
-      <workItem from="1629954079505" duration="1744000" />
+      <workItem from="1629954079505" duration="20218000" />
+      <workItem from="1632479603866" duration="1288000" />
     </task>
     <servers />
   </component>
@@ -70,13 +73,14 @@
     <option name="version" value="1" />
   </component>
   <component name="WindowStateProjectService">
-    <state x="616" y="199" key="#Illuminated_Cloud" timestamp="1629954082544">
-      <screen x="90" y="0" width="1830" height="1080" />
+    <state x="618" y="199" key="#Illuminated_Cloud" timestamp="1632479608331">
+      <screen x="93" y="0" width="1827" height="1080" />
     </state>
     <state x="2472" y="199" key="#Illuminated_Cloud/90.0.1830.1080/1920.0.1920.1080@1920.0.1920.1080" timestamp="1627363530186" />
     <state x="616" y="199" key="#Illuminated_Cloud/90.0.1830.1080/1920.0.1920.1080@90.0.1830.1080" timestamp="1629954082544" />
     <state x="616" y="199" key="#Illuminated_Cloud/90.0.1830.1080@90.0.1830.1080" timestamp="1628639914914" />
     <state x="800" y="265" key="#Illuminated_Cloud/90.0.2470.1440@90.0.2470.1440" timestamp="1629769272515" />
+    <state x="618" y="199" key="#Illuminated_Cloud/93.0.1827.1080/1920.0.1920.1080@93.0.1827.1080" timestamp="1632479608331" />
     <state x="2381" y="183" key="SettingsEditor" timestamp="1627363749522">
       <screen x="1920" y="0" width="1920" height="1080" />
     </state>

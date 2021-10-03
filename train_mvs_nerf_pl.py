@@ -111,7 +111,7 @@ class MVSSystem(LightningModule):
 
 
         volume_feature, img_feat, depth_values = self.MVSNet(imgs[:, :3], proj_mats[:, :3], near_fars[0,0],pad=args.pad)
-        # imgs = self.unpreprocess(imgs)
+        imgs = self.unpreprocess(imgs)
 
 
         N_rays, N_samples = args.batch_size, args.N_samples
@@ -193,7 +193,7 @@ class MVSSystem(LightningModule):
             world_to_ref = pose_ref['w2cs'][0]
             tgt_to_world, intrinsic = pose_ref['c2ws'][-1], pose_ref['intrinsics'][-1]
             volume_feature, img_feat, _ = self.MVSNet(imgs[:, :3], proj_mats[:, :3], near_fars[0], pad=args.pad)
-            # imgs = self.unpreprocess(imgs)
+            imgs = self.unpreprocess(imgs)
             rgbs, depth_preds = [],[]
             for chunk_idx in range(H*W//args.chunk + int(H*W%args.chunk>0)):
 

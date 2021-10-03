@@ -1,6 +1,6 @@
 import os
 
-cuda = 2
+cuda = 0
 N_samples = 128
 N_importance = 0
 batch_size = 1024
@@ -15,12 +15,12 @@ epoches = 8
 
 
 # #########################   nerf finetuning  ##################################
-for data_name in ['ship']:#'ship','mic','chair','lego','drums','ficus','materials','hotdog'
+for data_name in ['mic']:#'ship','mic','chair','lego','drums','ficus','materials','hotdog'
     cmd = f'CUDA_VISIBLE_DEVICES={cuda}  python train_mvs_nerf_finetuning_pl.py ' \
           f'--dataset_name blender --datadir /mnt/new_disk_2/anpei/Dataset/nerf_synthetic/{data_name} '\
           f'--expname {data_name}_1h  --with_rgb_loss  --batch_size {batch_size} ' \
-          f'--num_epochs {20} --imgScale_test {1.0} --white_bkgd --N_samples {N_samples} --pad 0  ' \
-          f'--ckpt ./ckpts/mvsnerf-v0.tar --N_vis 20 '
+          f'--num_epochs {1} --imgScale_test {1.0} --white_bkgd --N_samples {N_samples} --pad 0  ' \
+          f'--ckpt ./ckpts/mvsnerf-v0.tar --N_vis 1 '
     print(cmd)
     os.system(cmd)
 
