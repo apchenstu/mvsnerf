@@ -7,12 +7,14 @@ geometric and neural radiance fields for view synthesis, Moreover, if dense imag
 
 ## Installation
 
-#### Tested on Ubuntu 16.04 + Pytorch 1.8 + Pytorch Lignting 1.3.5
+#### Tested on Ubuntu 20.04 + Pytorch 1.10.1 + Pytorch Lignting 1.3.5
 
 Install environment:
 ```
-pip install pytorch-lightning, inplace_abn
-pip install imageio, pillow, scikit-image, opencv-python, config-argparse, lpips
+conda create -n mvsnerf python=3.8
+conda activate mvsnerf
+pip install torch==1.10.1+cu113 torchvision==0.11.2+cu113 torchaudio==0.10.1+cu113 -f https://download.pytorch.org/whl/cu113/torch_stable.html
+pip install pytorch-lightning==1.3.5 imageio pillow scikit-image opencv-python configargparse lpips kornia warmup_scheduler matplotlib test-tube imageio-ffmpeg
 ```
 
 
