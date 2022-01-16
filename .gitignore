@@ -134,3 +134,6 @@ xgaze/
 # logs
 results/
 runs_fine_tuning/
+
+# vim ctags file
+tags/
