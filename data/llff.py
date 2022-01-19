@@ -278,8 +278,10 @@ class LLFFDataset(Dataset):
 
         # Step 1: rescale focal length according to training resolution
         H, W, focal = poses[0, :, -1]  # original intrinsics, same for all images
+        print('original focal', focal)
 
         focal = [focal* self.img_wh[0] / W, focal* self.img_wh[1] / H]
+        print('porcessed focal', focal)
 
         # Step 2: correct poses
         poses = np.concatenate([poses[..., 1:2], -poses[..., :1], poses[..., 2:4]], -1)
