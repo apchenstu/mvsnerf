@@ -72,8 +72,10 @@ def center_poses(poses, blender2opencv):
         np.concatenate([poses, last_row], 1)  # (N_images, 4, 4) homogeneous coordinate
 
     poses_centered = np.linalg.inv(pose_avg_homo) @ poses_homo  # (N_images, 4, 4)
+    # 草，这个地方源代码没有乘这个blender2opencv，做这个操作相当于把相机转换到另一个坐标系了，和一般的nerf坐标系不同
     poses_centered = poses_centered @ blender2opencv
     poses_centered = poses_centered[:, :3]  # (N_images, 3, 4)
+    print('center in center_poses',poses_centered[:, :3, 3].mean(0))
 
     return poses_centered, np.linalg.inv(pose_avg_homo) @ blender2opencv
 
@@ -170,6 +172,8 @@ class LLFFDataset(Dataset):
         self.define_transforms()
 
         self.blender2opencv = np.array([[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]])
+        # self.blender2opencv = np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]])
+
         if not load_ref:
             self.read_meta()
         self.white_back = False
@@ -196,12 +200,14 @@ class LLFFDataset(Dataset):
         poses = np.concatenate([poses[..., 1:2], -poses[..., :1], poses[..., 2:4]], -1)
         # (N_images, 3, 4) exclude H, W, focal
         self.poses, self.pose_avg = center_poses(poses, self.blender2opencv)
+        # print('pose_avg in read_meta', self.pose_avg)
         # self.poses = poses @ self.blender2opencv
 
         # Step 3: correct scale so that the nearest depth is at a little more than 1.0
         # See https://github.com/bmild/nerf/issues/34
         near_original = self.bounds.min()
         scale_factor = near_original * 0.75  # 0.75 is the default parameter
+        print('scale_factor', scale_factor)
         # the nearest depth is at 1/0.75=1.33
         self.bounds /= scale_factor
         self.poses[..., 3] /= scale_factor

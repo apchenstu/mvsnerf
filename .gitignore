@@ -134,6 +134,7 @@ xgaze/
 # logs
 results/
 runs_fine_tuning/
+.vscode/
 
 # vim ctags file
 tags
