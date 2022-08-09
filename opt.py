@@ -1,5 +1,6 @@
 import configargparse
 
+
 def config_parser(cmd=None):
     parser = configargparse.ArgumentParser()
     parser.add_argument('--config', is_config_file=True,
@@ -80,12 +81,9 @@ def config_parser(cmd=None):
     parser.add_argument("--raw_noise_std", type=float, default=0.,
                         help='std dev of noise added to regularize sigma_a output, 1e0 recommended')
 
-
-
-    ## blender flags
+    # blender flags
     parser.add_argument("--white_bkgd", action='store_true',
                         help='set to render synthetic data on a white bkgd (always use for dvoxels)')
-
 
     # logging/saving options
     parser.add_argument("--N_vis", type=int, default=20,

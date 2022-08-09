@@ -543,7 +543,7 @@ class MVSNeRF(nn.Module):
         """
         super(MVSNeRF, self).__init__()
 
-        self.in_ch_pts, self.in_ch_views,self.in_ch_feat = input_ch_pts, input_ch_views, input_ch_feat
+        self.in_ch_pts, self.in_ch_views, self.in_ch_feat = input_ch_pts, input_ch_views, input_ch_feat
 
         # we provide two version network structure
         if 'v0' == net_type:
@@ -567,7 +567,9 @@ class MVSNeRF(nn.Module):
         return RGBA
 
 def create_nerf_mvs(args, pts_embedder=True, use_mvs=False, dir_embedder=True):
-    """Instantiate mvs NeRF's MLP model.
+    """
+    Instantiate mvs NeRF's MLP model.
+    NeRF
     """
 
     if pts_embedder:

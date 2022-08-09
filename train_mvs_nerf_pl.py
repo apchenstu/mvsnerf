@@ -50,14 +50,17 @@ class MVSSystem(LightningModule):
         self.render_kwargs_train.pop('network_mvs')
         self.render_kwargs_train['NDC_local'] = False
 
-        self.eval_metric = [0.01,0.05, 0.1]
-
+        self.eval_metric = [0.01, 0.05, 0.1]
+        dataset = dataset_dict[self.args.dataset_name]
+        train_dir, val_dir = self.args.datadir, self.args.datadir
+        self.train_dataset = dataset(args, split='train')
+        self.val_dataset = dataset(args, split='val')  #
 
     def decode_batch(self, batch, idx=list(torch.arange(4))):
 
         data_mvs = sub_selete_data(batch, device, idx, filtKey=[])
         pose_ref = {'w2cs': data_mvs['w2cs'].squeeze(), 'intrinsics': data_mvs['intrinsics'].squeeze(),
-                    'c2ws': data_mvs['c2ws'].squeeze(),'near_fars':data_mvs['near_fars'].squeeze()}
+                    'c2ws': data_mvs['c2ws'].squeeze(), 'near_fars': data_mvs['near_fars'].squeeze()}
 
         return data_mvs, pose_ref
 
@@ -74,12 +77,13 @@ class MVSSystem(LightningModule):
     def forward(self):
         return
 
-    def prepare_data(self):
-        dataset = dataset_dict[self.args.dataset_name]
-        train_dir, val_dir = self.args.datadir , self.args.datadir
-        self.train_dataset = dataset(root_dir=train_dir, split='train', max_len=-1 , downSample=args.imgScale_train)
-        self.val_dataset   = dataset(root_dir=val_dir, split='val', max_len=10 , downSample=args.imgScale_test)#
-
+    # def prepare_data(self):
+    #     dataset = dataset_dict[self.args.dataset_name]
+    #     train_dir, val_dir = self.args.datadir , self.args.datadir
+    #     self.train_dataset = dataset(split='train')
+    #     self.val_dataset = dataset(split='val')#
+        # self.train_dataset = dataset(split='train', max_len=-1, downSample=args.imgScale_train)
+        # self.val_dataset = dataset(split='val', max_len=10, downSample=args.imgScale_test)  #
 
     def configure_optimizers(self):
         eps = 1e-7
