@@ -1,3 +1,5 @@
+import torch
+
 from opt import config_parser
 from torch.utils.data import DataLoader
 
@@ -15,8 +17,8 @@ import imageio
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning import LightningModule, Trainer, loggers
 
-# import os
-# os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+# from data.llff import load_colmap_depth
+
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
@@ -55,8 +57,8 @@ class MVSSystem(LightningModule):
 
         dataset = dataset_dict[self.args.dataset_name]
         self.train_dataset = dataset(args, split='train')
-        self.val_dataset = dataset(args, split='val')
-        # self.train_dataset = dataset(args)
+        # self.val_dataset = dataset(args, split='val')
+        self.train_dataset_depth = dataset(args, split='train_depth')
         self.init_volume()
         self.grad_vars += list(self.volume.parameters())
 
@@ -111,9 +113,11 @@ class MVSSystem(LightningModule):
         del features
 
     def decode_batch(self, batch):
-        rays = batch['rays'].squeeze()  # (B, 8)
-        rgbs = batch['rgbs'].squeeze()  # (B, 3)
-        return rays, rgbs
+        rays = batch[0]['rays'].squeeze()  # (B, 8)
+        rgbs = batch[0]['rgbs'].squeeze()  # (B, 3)
+        depths = batch[1]['depths'].squeeze()
+        depRays = batch[1]['depRays'].squeeze()
+        return rays, rgbs, depths, depRays
 
     def unpreprocess(self, data, shape=(1, 1, 3, 1, 1)):
         # to unnormalize image for visualization
@@ -132,42 +136,71 @@ class MVSSystem(LightningModule):
 
     # FIXME: update learning rate
     def get_lr(self):
+        # decay_rate = 0.1
+        # decay_steps = args.lrate_decay * 1000
+        # new_lrate = args.lrate * (decay_rate ** (self.global_step / decay_steps))
+        # for param_group in self.optimizer.param_groups:
+        #     param_group['lr'] = new_lrate
+        #     return param_group['lr']
         for param_group in self.optimizer.param_groups:
             return param_group['lr']
 
     def train_dataloader(self):
-        return DataLoader(self.train_dataset,
+        return [DataLoader(self.train_dataset,
+                          shuffle=True,
+                          num_workers=8,
+                          batch_size=args.batch_size,
+                          pin_memory=True),
+                DataLoader(self.train_dataset_depth,
                           shuffle=True,
                           num_workers=8,
                           batch_size=args.batch_size,
                           pin_memory=True)
+                ]
 
-    def val_dataloader(self):
-        return DataLoader(self.val_dataset,
-                          shuffle=False,
-                          num_workers=1,
-                          batch_size=1,
-                          pin_memory=True)
+    # def val_dataloader(self):
+    #     return DataLoader(self.val_dataset,
+    #                       shuffle=False,
+    #                       num_workers=1,
+    #                       batch_size=1,
+    #                       pin_memory=True)
 
     def training_step(self, batch, batch_nb):
-
-        rays, rgbs_target = self.decode_batch(batch)
+        # rays (batch_size, 8),
+        # rgbs_target (batch_size, 3),
+        # depths_target (batch_size),
+        # depRays (batch_size, 2)
+        rays, rgbs_target, depths_target, depRays = self.decode_batch(batch)
 
         if args.use_density_volume and 0 == self.global_step % 200:
             self.update_density_volume()
 
+        rays = torch.cat([rays, depRays], 0)
+        # xyz_coarse_sampled (B, N_samples, 3)
+        # rays_o (B, 3)
+        # rays_d (B, 3)
+        # z_vals (B, N_samples)
         xyz_coarse_sampled, rays_o, rays_d, z_vals = ray_marcher(rays, N_samples=args.N_samples,
                                                                  lindisp=args.use_disp, perturb=args.perturb)
-
+        xyz_coarse_sampled = xyz_coarse_sampled.float()
+        rays_o = rays_o.float()
+        rays_d = rays_d.float()
+        z_vals = z_vals.float()
         # Converting world coordinate to ndc coordinate
         H, W = self.imgs.shape[-2:]
         inv_scale = torch.tensor([W - 1, H - 1]).to(device)
         w2c_ref, intrinsic_ref = self.pose_source['w2cs'][0], self.pose_source['intrinsics'][0]
+        # print(f"w2c_ref.dtype: {w2c_ref.dtype}\n"
+        #       f"intrinsic_ref.dtype: {intrinsic_ref.dtype}\n"
+        #       f"xyz_coarse_sampled.dtype: {xyz_coarse_sampled.dtype}\n"
+        #       f"inv_scale.dtype: {inv_scale.dtype}\n"
+        #       f"self.near_far_source[0].dtype: {self.near_far_source[0].dtype}\n"
+        #       f"self.near_far_source[1].dtype: {self.near_far_source[1].dtype}\n")
         xyz_NDC = get_ndc_coordinate(w2c_ref, intrinsic_ref, xyz_coarse_sampled, inv_scale,
                                      near=self.near_far_source[0], far=self.near_far_source[1], pad=args.pad,
                                      lindisp=args.use_disp)
 
-        # important sampleing
+        # important sampling
         if self.density_volume is not None and args.N_importance > 0:
             xyz_coarse_sampled, rays_o, rays_d, z_vals = ray_marcher_fine(rays, self.density_volume, z_vals, xyz_NDC,
                                                                           N_importance=args.N_importance)
@@ -175,10 +208,18 @@ class MVSSystem(LightningModule):
                                          near=self.near_far_source[0], far=self.near_far_source[1], pad=args.pad,
                                          lindisp=args.use_disp)
 
+        print(f"xyz_coarse_sampled.dtype: {xyz_coarse_sampled.dtype}\n"
+              f"xyz_NDC.dtype: {xyz_NDC.dtype}\n"
+              f"z_vals.dtype: {z_vals.dtype}\n"
+              f"rays_o.dtype: {rays_o.dtype}\n"
+              f"rays_d.dtype: {rays_d.dtype}\n")
         # rendering
         rgbs, disp, acc, depth_pred, alpha, extras = rendering(args, self.pose_source, xyz_coarse_sampled, xyz_NDC,
                                                                z_vals, rays_o, rays_d,
                                                                self.volume, self.imgs, **self.render_kwargs_train)
+        rgbs = rgbs[:args.batch_size, :]
+        depth_pred = depth_pred[args.batch_size:]
+
         # FIXME: add depth loss
         log, loss = {}, 0
         if 'rgb0' in extras:
@@ -193,6 +234,11 @@ class MVSSystem(LightningModule):
             loss += img_loss
             psnr = mse2psnr2(img_loss.item())
 
+        if self.args.depth_loss:
+            depth_loss = img2mse(depth_pred, depths_target)
+            loss += 0.1 * depth_loss
+
+
             with torch.no_grad():
                 self.log('train/loss', loss, prog_bar=True)
                 self.log('train/img_mse_loss', img_loss.item(), prog_bar=False)
@@ -201,98 +247,98 @@ class MVSSystem(LightningModule):
         # if self.global_step == 3999 or self.global_step == 9999:
         #     self.save_ckpt(f'{self.global_step}')
 
-        return {'loss': loss}
+        return {'loss': loss, 'psnr': psnr}
 
-    def validation_step(self, batch, batch_nb):
+    # def validation_step(self, batch, batch_nb):
+    #
+    #     self.MVSNet.train()
+    #     rays, img = self.decode_batch(batch)
+    #     img = img.cpu()  # (H, W, 3)
+    #     # mask = batch['mask'][0]
+    #
+    #     N_rays_all = rays.shape[0]
+    #
+    #     ##################  rendering #####################
+    #     keys = ['val_psnr_all']
+    #     log = init_log({}, keys)
+    #     with torch.no_grad():
+    #
+    #         rgbs, depth_preds = [], []
+    #         for chunk_idx in range(N_rays_all // args.chunk + int(N_rays_all % args.chunk > 0)):
+    #
+    #             xyz_coarse_sampled, rays_o, rays_d, z_vals = ray_marcher(
+    #                 rays[chunk_idx * args.chunk:(chunk_idx + 1) * args.chunk],
+    #                 N_samples=args.N_samples, lindisp=args.use_disp)
+    #
+    #             # Converting world coordinate to ndc coordinate
+    #             H, W = img.shape[:2]
+    #             inv_scale = torch.tensor([W - 1, H - 1]).to(device)
+    #             w2c_ref, intrinsic_ref = self.pose_source['w2cs'][0], self.pose_source['intrinsics'][0].clone()
+    #             intrinsic_ref[:2] *= args.imgScale_test / args.imgScale_train
+    #             xyz_NDC = get_ndc_coordinate(w2c_ref, intrinsic_ref, xyz_coarse_sampled, inv_scale,
+    #                                          near=self.near_far_source[0], far=self.near_far_source[1],
+    #                                          pad=args.pad * args.imgScale_test, lindisp=args.use_disp)
+    #
+    #             # important sampleing
+    #             if self.density_volume is not None and args.N_importance > 0:
+    #                 xyz_coarse_sampled, rays_o, rays_d, z_vals = ray_marcher_fine(
+    #                     rays[chunk_idx * args.chunk:(chunk_idx + 1) * args.chunk],
+    #                     self.density_volume, z_vals, xyz_NDC, N_importance=args.N_importance)
+    #                 xyz_NDC = get_ndc_coordinate(w2c_ref, intrinsic_ref, xyz_coarse_sampled, inv_scale,
+    #                                              near=self.near_far_source[0], far=self.near_far_source[1],
+    #                                              pad=args.pad, lindisp=args.use_disp)
+    #
+    #             # rendering
+    #             rgb, disp, acc, depth_pred, alpha, extras = rendering(args, self.pose_source, xyz_coarse_sampled,
+    #                                                                   xyz_NDC, z_vals, rays_o, rays_d,
+    #                                                                   self.volume, self.imgs,
+    #                                                                   **self.render_kwargs_train)
+    #
+    #             rgbs.append(rgb.cpu());
+    #             depth_preds.append(depth_pred.cpu())
+    #
+    #         rgbs, depth_r = torch.clamp(torch.cat(rgbs).reshape(H, W, 3), 0, 1), torch.cat(depth_preds).reshape(H, W)
+    #         img_err_abs = (rgbs - img).abs()
+    #
+    #         log['val_psnr_all'] = mse2psnr(torch.mean(img_err_abs ** 2))
+    #         depth_r, _ = visualize_depth(depth_r, self.near_far_source)
+    #         self.logger.experiment.add_images('val/depth_gt_pred', depth_r[None], self.global_step)
+    #
+    #         img_vis = torch.stack((img, rgbs, img_err_abs.cpu() * 5)).permute(0, 3, 1, 2)
+    #         self.logger.experiment.add_images('val/rgb_pred_err', img_vis, self.global_step)
+    #         os.makedirs(f'runs_fine_tuning/{self.args.expname}/{self.args.expname}/', exist_ok=True)
+    #
+    #         img_vis = torch.cat((img, rgbs, img_err_abs * 10, depth_r.permute(1, 2, 0)), dim=1).numpy()
+    #         imageio.imwrite(
+    #             f'runs_fine_tuning/{self.args.expname}/{self.args.expname}/{self.global_step:08d}_{self.idx:02d}.png',
+    #             (img_vis * 255).astype('uint8'))
+    #         self.idx += 1
+    #
+    #     return log
 
-        self.MVSNet.train()
-        rays, img = self.decode_batch(batch)
-        img = img.cpu()  # (H, W, 3)
-        # mask = batch['mask'][0]
-
-        N_rays_all = rays.shape[0]
-
-        ##################  rendering #####################
-        keys = ['val_psnr_all']
-        log = init_log({}, keys)
-        with torch.no_grad():
-
-            rgbs, depth_preds = [], []
-            for chunk_idx in range(N_rays_all // args.chunk + int(N_rays_all % args.chunk > 0)):
-
-                xyz_coarse_sampled, rays_o, rays_d, z_vals = ray_marcher(
-                    rays[chunk_idx * args.chunk:(chunk_idx + 1) * args.chunk],
-                    N_samples=args.N_samples, lindisp=args.use_disp)
-
-                # Converting world coordinate to ndc coordinate
-                H, W = img.shape[:2]
-                inv_scale = torch.tensor([W - 1, H - 1]).to(device)
-                w2c_ref, intrinsic_ref = self.pose_source['w2cs'][0], self.pose_source['intrinsics'][0].clone()
-                intrinsic_ref[:2] *= args.imgScale_test / args.imgScale_train
-                xyz_NDC = get_ndc_coordinate(w2c_ref, intrinsic_ref, xyz_coarse_sampled, inv_scale,
-                                             near=self.near_far_source[0], far=self.near_far_source[1],
-                                             pad=args.pad * args.imgScale_test, lindisp=args.use_disp)
-
-                # important sampleing
-                if self.density_volume is not None and args.N_importance > 0:
-                    xyz_coarse_sampled, rays_o, rays_d, z_vals = ray_marcher_fine(
-                        rays[chunk_idx * args.chunk:(chunk_idx + 1) * args.chunk],
-                        self.density_volume, z_vals, xyz_NDC, N_importance=args.N_importance)
-                    xyz_NDC = get_ndc_coordinate(w2c_ref, intrinsic_ref, xyz_coarse_sampled, inv_scale,
-                                                 near=self.near_far_source[0], far=self.near_far_source[1],
-                                                 pad=args.pad, lindisp=args.use_disp)
-
-                # rendering
-                rgb, disp, acc, depth_pred, alpha, extras = rendering(args, self.pose_source, xyz_coarse_sampled,
-                                                                      xyz_NDC, z_vals, rays_o, rays_d,
-                                                                      self.volume, self.imgs,
-                                                                      **self.render_kwargs_train)
-
-                rgbs.append(rgb.cpu());
-                depth_preds.append(depth_pred.cpu())
-
-            rgbs, depth_r = torch.clamp(torch.cat(rgbs).reshape(H, W, 3), 0, 1), torch.cat(depth_preds).reshape(H, W)
-            img_err_abs = (rgbs - img).abs()
-
-            log['val_psnr_all'] = mse2psnr(torch.mean(img_err_abs ** 2))
-            depth_r, _ = visualize_depth(depth_r, self.near_far_source)
-            self.logger.experiment.add_images('val/depth_gt_pred', depth_r[None], self.global_step)
-
-            img_vis = torch.stack((img, rgbs, img_err_abs.cpu() * 5)).permute(0, 3, 1, 2)
-            self.logger.experiment.add_images('val/rgb_pred_err', img_vis, self.global_step)
-            os.makedirs(f'runs_fine_tuning/{self.args.expname}/{self.args.expname}/', exist_ok=True)
-
-            img_vis = torch.cat((img, rgbs, img_err_abs * 10, depth_r.permute(1, 2, 0)), dim=1).numpy()
-            imageio.imwrite(
-                f'runs_fine_tuning/{self.args.expname}/{self.args.expname}/{self.global_step:08d}_{self.idx:02d}.png',
-                (img_vis * 255).astype('uint8'))
-            self.idx += 1
-
-        return log
-
-    def validation_epoch_end(self, outputs):
-
-        if self.args.with_depth:
-            mean_psnr = torch.stack([x['val_psnr'] for x in outputs]).mean()
-            mask_sum = torch.stack([x['mask_sum'] for x in outputs]).sum()
-            # mean_d_loss_l = torch.stack([x['val_depth_loss_l'] for x in outputs]).mean()
-            mean_d_loss_r = torch.stack([x['val_depth_loss_r'] for x in outputs]).mean()
-            mean_abs_err = torch.stack([x['val_abs_err'] for x in outputs]).sum() / mask_sum
-            mean_acc_1mm = torch.stack([x[f'val_acc_{self.eval_metric[0]}mm'] for x in outputs]).sum() / mask_sum
-            mean_acc_2mm = torch.stack([x[f'val_acc_{self.eval_metric[1]}mm'] for x in outputs]).sum() / mask_sum
-            mean_acc_4mm = torch.stack([x[f'val_acc_{self.eval_metric[2]}mm'] for x in outputs]).sum() / mask_sum
-
-            self.log('val/d_loss_r', mean_d_loss_r, prog_bar=False)
-            self.log('val/PSNR', mean_psnr, prog_bar=False)
-
-            self.log('val/abs_err', mean_abs_err, prog_bar=False)
-            self.log(f'val/acc_{self.eval_metric[0]}mm', mean_acc_1mm, prog_bar=False)
-            self.log(f'val/acc_{self.eval_metric[1]}mm', mean_acc_2mm, prog_bar=False)
-            self.log(f'val/acc_{self.eval_metric[2]}mm', mean_acc_4mm, prog_bar=False)
-
-        mean_psnr_all = torch.stack([x['val_psnr_all'] for x in outputs]).mean()
-        self.log('val/PSNR_all', mean_psnr_all, prog_bar=True)
-        return
+    # def validation_epoch_end(self, outputs):
+    #
+    #     if self.args.with_depth:
+    #         mean_psnr = torch.stack([x['val_psnr'] for x in outputs]).mean()
+    #         mask_sum = torch.stack([x['mask_sum'] for x in outputs]).sum()
+    #         # mean_d_loss_l = torch.stack([x['val_depth_loss_l'] for x in outputs]).mean()
+    #         mean_d_loss_r = torch.stack([x['val_depth_loss_r'] for x in outputs]).mean()
+    #         mean_abs_err = torch.stack([x['val_abs_err'] for x in outputs]).sum() / mask_sum
+    #         mean_acc_1mm = torch.stack([x[f'val_acc_{self.eval_metric[0]}mm'] for x in outputs]).sum() / mask_sum
+    #         mean_acc_2mm = torch.stack([x[f'val_acc_{self.eval_metric[1]}mm'] for x in outputs]).sum() / mask_sum
+    #         mean_acc_4mm = torch.stack([x[f'val_acc_{self.eval_metric[2]}mm'] for x in outputs]).sum() / mask_sum
+    #
+    #         self.log('val/d_loss_r', mean_d_loss_r, prog_bar=False)
+    #         self.log('val/PSNR', mean_psnr, prog_bar=False)
+    #
+    #         self.log('val/abs_err', mean_abs_err, prog_bar=False)
+    #         self.log(f'val/acc_{self.eval_metric[0]}mm', mean_acc_1mm, prog_bar=False)
+    #         self.log(f'val/acc_{self.eval_metric[1]}mm', mean_acc_2mm, prog_bar=False)
+    #         self.log(f'val/acc_{self.eval_metric[2]}mm', mean_acc_4mm, prog_bar=False)
+    #
+    #     mean_psnr_all = torch.stack([x['val_psnr_all'] for x in outputs]).mean()
+    #     self.log('val/PSNR_all', mean_psnr_all, prog_bar=True)
+    #     return
 
     def save_ckpt(self, name='latest'):
         save_dir = f'runs_fine_tuning/{self.args.expname}/ckpts'
@@ -316,7 +362,7 @@ if __name__ == '__main__':
     checkpoint_callback = ModelCheckpoint(os.path.join(f'runs_fine_tuning/{args.expname}/ckpts/', '{epoch:02d}'),
                                           monitor='val/PSNR',
                                           mode='max',
-                                          save_top_k=0)
+                                          save_top_k=-1)
 
     logger = loggers.TestTubeLogger(
         save_dir="runs_fine_tuning",
@@ -338,7 +384,9 @@ if __name__ == '__main__':
                       val_check_interval=500,
                       benchmark=True,
                       precision=16 if args.use_amp else 32,
-                      amp_level='O1')
+                      amp_level='O1',
+                      fast_dev_run=True
+                      )
 
     trainer.fit(system)
     system.save_ckpt()

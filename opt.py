@@ -34,6 +34,7 @@ def config_parser(cmd=None):
                         help='point sampling with density')
 
     # training options
+    parser.add_argument("--use_casmvs", action='store_true')
     parser.add_argument("--netdepth", type=int, default=6,
                         help='layers in network')
     parser.add_argument("--netwidth", type=int, default=128,
@@ -48,7 +49,7 @@ def config_parser(cmd=None):
                         help='scheduler decay step')
     parser.add_argument('--decay_gamma', type=float, default=0.5,
                         help='learning rate decay amount')
-    parser.add_argument('--lr_scheduler', type=str, default='steplr',
+    parser.add_argument('--lr_scheduler', type=str, default='cosine',
                         help='scheduler type',
                         choices=['steplr', 'cosine', 'poly'])
     parser.add_argument('--warmup_epochs', type=int, default=0,
@@ -88,6 +89,10 @@ def config_parser(cmd=None):
     # logging/saving options
     parser.add_argument("--N_vis", type=int, default=20,
                         help='frequency of visualize the depth')
+
+    parser.add_argument("--depth_loss", default=False, action="store_true",
+                        help='Use depth supervision by colmap - depth loss.')
+
     if cmd is not None:
         return parser.parse_args(cmd)
     else:
