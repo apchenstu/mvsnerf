@@ -23,7 +23,7 @@ def get_ray_directions(H, W, focal, center=None):
     # the direction here is without +0.5 pixel centering as calibration is not so accurate
     # see https://github.com/bmild/nerf/issues/24
     cent = center if center is not None else [W / 2, H / 2]
-    directions = torch.stack([(i - cent[0]) / focal[0], (j - cent[1]) / focal[1], torch.ones_like(i)], -1)  # (H, W, 3)
+    directions = torch.stack([(i - cent[0]) / focal, (j - cent[1]) / focal, torch.ones_like(i)], -1)  # (H, W, 3)
 
     return directions
 
@@ -79,12 +79,12 @@ def get_ndc_rays(H, W, focal, near, rays_o, rays_d):
     oy_oz = rays_o[..., 1] / rays_o[..., 2]
 
     # Projection
-    o0 = -1. / (W / (2. * focal[0])) * ox_oz
-    o1 = -1. / (H / (2. * focal[1])) * oy_oz
+    o0 = -1. / (W / (2. * focal)) * ox_oz
+    o1 = -1. / (H / (2. * focal)) * oy_oz
     o2 = 1. + 2. * near / rays_o[..., 2]
 
-    d0 = -1. / (W / (2. * focal[0])) * (rays_d[..., 0] / rays_d[..., 2] - ox_oz)
-    d1 = -1. / (H / (2. * focal[1])) * (rays_d[..., 1] / rays_d[..., 2] - oy_oz)
+    d0 = -1. / (W / (2. * focal)) * (rays_d[..., 0] / rays_d[..., 2] - ox_oz)
+    d1 = -1. / (H / (2. * focal)) * (rays_d[..., 1] / rays_d[..., 2] - oy_oz)
     d2 = 1 - o2
 
     rays_o = torch.stack([o0, o1, o2], -1)  # (B, 3)

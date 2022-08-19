@@ -8,7 +8,7 @@ pairs = torch.load('./configs/pairs.th')
 
 # llff
 root_dir = './nerf_llff_data/'
-for scene in ['triangle_5views']:  # t-rex, hexagonal, 3D_Graffiti, Penrose
+for scene in ['illusion_2view']:  # t-rex, hexagonal, 3D_Graffiti, Penrose, triangle_5views
     poses_bounds = np.load(os.path.join(root_dir, scene, 'poses_bounds.npy'))  # (N_images, 11) -> (121, 17)
     N_images = poses_bounds.shape[0]
     poses = poses_bounds[:, :15].reshape(-1, 3, 5)  # (N_images, 3, 5)
@@ -23,7 +23,7 @@ for scene in ['triangle_5views']:  # t-rex, hexagonal, 3D_Graffiti, Penrose
     pairs[f'{scene}_val'] = pair_idx[::6]
     pairs[f'{scene}_train'] = np.delete(pair_idx, range(0, N_images, 6))
 
-    # pairs[f'{scene}_test'] = pair_idx[1]
-    # pairs[f'{scene}_val'] = pair_idx[1]
-    # pairs[f'{scene}_train'] = np.delete(pair_idx, 1)
+    # pairs[f'{scene}_test'] = []
+    # pairs[f'{scene}_val'] = []
+    # pairs[f'{scene}_train'] = [0, 1]
 torch.save(pairs, './configs/pairs.th')

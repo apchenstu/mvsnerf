@@ -156,7 +156,7 @@ def nerf_video_path(c2ws, theta_range=10,phi_range=20,N_views=120):
 
 
 
-for i_scene, scene in enumerate(['triangle_5views']):#'horns','flower','orchids', 'room','leaves','fern','trex','fortress', '3D_Graffiti', 'illusion', 't-rex'
+for i_scene, scene in enumerate(['t-rex_6views']):#'horns','flower','orchids', 'room','leaves','fern','trex','fortress', '3D_Graffiti', 'illusion', 't-rex'
     # add --use_color_volume if the ckpts are fintuned with this flag
     cmd = f'--datadir /home/yuchen/mvsnerf/nerf_llff_data/{scene} ' \
           f'--dataset_name llff --imgScale_test {1.0}  ' \
@@ -168,7 +168,7 @@ for i_scene, scene in enumerate(['triangle_5views']):#'horns','flower','orchids'
     is_finetued = True # set False if rendering without finetuning
     if is_finetued:
         cmd += f'--ckpt ./runs_fine_tuning/{scene}/ckpts/latest.tar'
-        name = 'ft_'
+        name = 'DSft_'
     else:
         cmd += '--ckpt ./ckpts/mvsnerf-v0.tar'
         name = ''

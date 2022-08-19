@@ -130,7 +130,7 @@ def _load_data(basedir, factor=None, width=None, height=None, load_imgs=True):
         else:
             return imageio.imread(f)
 
-    imgs = imgs = [imread(f)[..., :3] / 255. for f in imgfiles]
+    imgs = [imread(f)[..., :3] / 255. for f in imgfiles]
     imgs = np.stack(imgs, -1)
 
     print('Loaded image data', imgs.shape, poses[:, -1, 0])
@@ -161,16 +161,20 @@ def average_poses(poses):
     # 1. Compute the center
     center = poses[..., 3].mean(0)  # (3)
 
-    # 2. Compute the z axis
+    # 2. Compute the z axis, same to use sum and mean here
+    # z is vec2
     z = normalize(poses[..., 2].mean(0))  # (3)
 
     # 3. Compute axis y' (no need to normalize as it's not the final output)
+    # y_ is up/N
     y_ = poses[..., 1].mean(0)  # (3)
 
     # 4. Compute the x axis
+    # x is vec0 in viewmatrix
     x = normalize(np.cross(y_, z))  # (3)
 
     # 5. Compute the y axis (as z and x are normalized, y is already of norm 1)
+    # y is vec1 in viewmatrix
     y = np.cross(z, x)  # (3)
 
     pose_avg = np.stack([x, y, z, center], 1)  # (3, 4)
@@ -179,7 +183,7 @@ def average_poses(poses):
 
 
 
-def center_poses(poses):
+def center_poses(poses, blender2opencv):
     """
     Center the poses so that we can use NDC.
     See https://github.com/bmild/nerf/issues/34
@@ -199,11 +203,11 @@ def center_poses(poses):
         np.concatenate([poses, last_row], 1)  # (N_images, 4, 4) homogeneous coordinate
 
     poses_centered = np.linalg.inv(pose_avg_homo) @ poses_homo  # (N_images, 4, 4)
-    # poses_centered = poses_centered @ blender2opencv
+    poses_centered = poses_centered @ blender2opencv
     poses_centered = poses_centered[:, :3]  # (N_images, 3, 4)
 
-    # return poses_centered, np.linalg.inv(pose_avg_homo) @ blender2opencv
-    return poses_centered, np.linalg.inv(pose_avg_homo)
+    return poses_centered, np.linalg.inv(pose_avg_homo) @ blender2opencv
+    # return poses_centered, np.linalg.inv(pose_avg_homo)
 
 def create_spiral_poses(radii, focus_depth, n_poses=120):
     """
@@ -289,29 +293,27 @@ class LLFFDataset(Dataset):
         self.args = args
         self.root_dir = args.datadir
         self.split = split
-        downsample = args.imgScale_train if split == 'train' else args.imgScale_test
-        # self.img_wh = (int(960*downsample), int(640*downsample))
-        self.img_wh = (int(896*downsample), int(672*downsample))
-        assert self.img_wh[0] % 32 == 0 or self.img_wh[1] % 32 == 0, \
-            'image width must be divisible by 32, you may need to modify the imgScale'
+
         self.spheric_poses = spheric_poses
         self.define_transforms()
 
-        # self.blender2opencv = np.array([[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]])
+        self.blender2opencv = np.array([[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]])
         if not load_ref:
             self.read_meta()
         if depth_loss:
             self.load_colmap_depth()
         self.white_back = False
 
-    def load_colmap_depth(self, factor=4.5, bd_factor=.75):
+    def load_colmap_depth(self, bd_factor=.75):
         root_dir = self.root_dir
 
         images = read_images_binary(Path(root_dir) / 'sparse' / '0' / 'images.bin')
         points = read_points3d_binary(Path(root_dir) / 'sparse' / '0' / 'points3D.bin')
 
+        # # TODO: is this a valid approach?
+        # factor = np.sqrt(self.W * self.H / self.img_wh[0] / self.img_wh[1])
         poses = get_poses(images)
-        _, bds_raw, _ = _load_data(root_dir, width=self.img_wh[0], height=self.img_wh[1])  # factor=8 downsamples original imgs by 8x
+        _, bds_raw, _ = _load_data(root_dir, width=self.img_wh[0], height=self.img_wh[1])
         # _, bds_raw, _ = _load_data(root_dir, factor=factor)  # factor=8 downsamples original imgs by 8x
         bds_raw = np.moveaxis(bds_raw, -1, 0).astype(np.float32)
         # Rescale if bd_factor is provided
@@ -319,7 +321,6 @@ class LLFFDataset(Dataset):
 
         self.all_depths = []
         self.all_depRays = []
-        # rays_depth_list = []
         for id_im in self.img_idx:
             id_im += 1
             depth_list = []
@@ -335,11 +336,11 @@ class LLFFDataset(Dataset):
                 if depth < bds_raw[id_im - 1, 0] * sc or depth > bds_raw[id_im - 1, 1] * sc:
                     continue
                 depth_list.append(depth)
-                coord_list.append(point2D / factor)
+                coord_list.append(point2D / self.factor)
 
             # FIXME: need to check parameters here!!
             # FIXME: Whether it is identical to the DSNeRF
-            rays_depth = np.stack(get_rays_by_coord_np(int(self.H), int(self.W), self.focal[0], poses[id_im, :3, :4],
+            rays_depth = np.stack(get_rays_by_coord_np(int(self.H), int(self.W), self.focal, poses[id_im-1, :3, :4],
                                                        torch.from_numpy(np.array(coord_list))), axis=0)
             rays_depth = np.transpose(rays_depth, [1, 0, 2])
             rays_o = torch.from_numpy(np.array(rays_depth))[:, 0, :]
@@ -361,15 +362,15 @@ class LLFFDataset(Dataset):
             rays_data = torch.cat([rays_o, rays_d,
                                    near * torch.ones_like(rays_o[:, :1]),
                                    far * torch.ones_like(rays_o[:, :1])], 1)
+
             self.all_depRays.append(rays_data)
             # TODO：should have better way to implement this datatype conversion
             self.all_depths.append(torch.from_numpy(np.array(depth_list)))
-            # print("dummy")
         if 'train_depth' == self.split:
             self.all_depRays = torch.cat(self.all_depRays, 0)  # (N_points by colmap, 2)
             self.all_depths = torch.cat(self.all_depths, 0)  # .unsqueeze(1)  # (N_points by colmap, 1)
-            print("dummy")
-        # elif 'val' == self.split:
+            # print("dummy")
+        # elif 'val_depth' == self.split:
         #     self.all_depths = torch.cat(self.all_depths, 0)
         #     self.all_depRays = torch.cat(self.all_depRays, 0)
 
@@ -378,7 +379,7 @@ class LLFFDataset(Dataset):
         self.image_paths = sorted(glob.glob(os.path.join(self.root_dir, 'images/*')))
         # load full resolution image then resize
         if self.split in ['train', 'val']:
-            print(len(poses_bounds) , len(self.image_paths),self.root_dir)
+            print(len(poses_bounds) , len(self.image_paths), self.root_dir)
             assert len(poses_bounds) == len(self.image_paths), \
                 'Mismatch between number of images and number of poses! Please rerun COLMAP!'
 
@@ -387,7 +388,21 @@ class LLFFDataset(Dataset):
 
         # Step 1: rescale focal length according to training resolution
         self.H, self.W, self.focal = poses[0, :, -1]  # original intrinsics, same for all images
-        self.focal = [self.focal* self.img_wh[0] / self.W, self.focal* self.img_wh[1] / self.H]
+
+        downsample = self.args.imgScale_train if self.split == 'train' else self.args.imgScale_test
+        # TODO: add more resolution scales here to accommodate more datasets
+        if self.W / self.H == 4/3:
+            self.img_wh = (int(1024 * downsample), int(768 * downsample))
+        elif self.W / self.H == 16/9:
+            self.img_wh = (int(1024 * downsample), int(576 * downsample))
+        assert self.img_wh[0] % 32 == 0 or self.img_wh[1] % 32 == 0, \
+            'image width must be divisible by 32, you may need to modify the imgScale'
+
+        assert self.H * self.img_wh[0] == self.W * self.img_wh[1], \
+            f'You must set @img_wh to have the same aspect ratio as ({self.W}, {self.H}) !'
+        self.factor = self.W / self.img_wh[0]
+        self.focal /= self.factor
+        # self.focal = [self.focal * self.img_wh[0] / self.W, self.focal * self.img_wh[1] / self.H]
 
         # Step 2: correct poses
         # Original poses has rotation in form "down right back", change to "right up back"
@@ -396,7 +411,6 @@ class LLFFDataset(Dataset):
         # (N_images, 3, 4) exclude H, W, focal
         # self.poses, self.pose_avg = center_poses(poses, self.blender2opencv)
         # self.poses = poses @ self.blender2opencv
-        self.poses, self.pose_avg = center_poses(poses)
 
         # Step 3: correct scale so that the nearest depth is at a little more than 1.0
         # See https://github.com/bmild/nerf/issues/34
@@ -404,8 +418,9 @@ class LLFFDataset(Dataset):
         scale_factor = near_original * 0.75  # 0.75 is the default parameter
         # the nearest depth is at 1/0.75=1.33
         self.bounds /= scale_factor
-        self.poses[..., 3] /= scale_factor
-
+        poses[..., 3] /= scale_factor  # FIXME: H and W need to rescale?
+        # FIXME: what is the purpose of pose_avg here
+        self.poses, self.pose_avg = center_poses(poses, self.blender2opencv)  # pose_ave = inv(c2w)
         # sub select training views from pairing file
         if os.path.exists('configs/pairs.th'):
             name = os.path.basename(self.root_dir)
@@ -481,13 +496,13 @@ class LLFFDataset(Dataset):
         bounds = poses_bounds[:, -2:]  # (N_images, 2)
 
         # Step 1: rescale focal length according to training resolution
-        H, W, focal = poses[0, :, -1]  # original intrinsics, same for all images
+        # H, W, focal = poses[0, :, -1]  # original intrinsics, same for all images
 
-        focal = [focal* self.img_wh[0] / W, focal* self.img_wh[1] / H]
+        # focal = [focal * self.img_wh[0] / W, focal * self.img_wh[1] / H]
 
         # Step 2: correct poses
         poses = np.concatenate([poses[..., 1:2], -poses[..., :1], poses[..., 2:4]], -1)
-        poses, _ = center_poses(poses)
+
         # poses = poses @ self.blender2opencv
 
         # sub select training views from pairing file
@@ -506,7 +521,7 @@ class LLFFDataset(Dataset):
         scale_factor = near_original * 0.75  # 0.75 is the default parameter
         bounds /= scale_factor
         poses[..., 3] /= scale_factor
-
+        poses, _ = center_poses(poses, self.blender2opencv)
         src_transform = T.Compose([T.Normalize(mean=[0.485, 0.456, 0.406],
                                                 std=[0.229, 0.224, 0.225]),
                                     ])
@@ -526,7 +541,7 @@ class LLFFDataset(Dataset):
 
             # build proj mat from source views to ref view
             proj_mat_l = torch.eye(4)
-            intrinsic = torch.tensor([[focal[0], 0, w / 2], [0, focal[1], h / 2], [0, 0, 1]]).float()
+            intrinsic = torch.tensor([[self.focal, 0, w / 2], [0, self.focal, h / 2], [0, 0, 1]]).float()
             intrinsics.append(intrinsic.clone())
             intrinsic[:2] = intrinsic[:2] / 4   # 4 times downscale in the feature space
             proj_mat_l[:3, :4] = intrinsic @ w2c[:3, :4]
@@ -559,29 +574,30 @@ class LLFFDataset(Dataset):
         self.transform = T.ToTensor()
 
     def __len__(self):
-        if self.split == 'train':
+        if self.split in {'train', 'val'}:
             return len(self.all_rays)
-        elif self.split == "train_depth":
+        elif self.split in {'train_depth', 'val_depth'}:
             return len(self.all_depths)
-        return len(self.all_rays)
+        return 0
 
     def __getitem__(self, idx):
-        if self.split == 'train':  # use data in the buffers
+        if self.split in {'train', 'val'}:  # use data in the buffers
             sample = {'rays': self.all_rays[idx],
                       'rgbs': self.all_rgbs[idx]}
-        elif self.split == 'train_depth':
+        elif self.split in {'train_depth', 'val_depth'}:
             sample = {'depths': self.all_depths[idx],
                       'depRays': self.all_depRays[idx]}
         else:
-            img = self.all_rgbs[idx]
-            rays = self.all_rays[idx]
-            depth = self.all_depths[idx]
-            depRay = self.all_depRays[idx]
-
-            sample = {'rays': rays,
-                      'rgbs': img,
-                      'depth': depth,
-                      'depRay': depRay}
+            # img = self.all_rgbs[idx]
+            # rays = self.all_rays[idx]
+            # depth = self.all_depths[idx]
+            # depRay = self.all_depRays[idx]
+            #
+            # sample = {'rays': rays,
+            #           'rgbs': img,
+            #           'depth': depth,
+            #           'depRay': depRay}
+            sample = {}
 
         return sample
 
