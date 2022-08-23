@@ -11,8 +11,6 @@ sys.path.append(root)
 
 from opt import config_parser
 from data import dataset_dict
-from torch.utils.data import DataLoader
-import matplotlib.pyplot as plt
 
 
 # models
@@ -24,11 +22,7 @@ from scipy.spatial.transform import Rotation as R
 from tqdm import tqdm
 
 
-from skimage.metrics import structural_similarity
-
 # pytorch-lightning
-from pytorch_lightning.callbacks import ModelCheckpoint
-from pytorch_lightning import LightningModule, Trainer, loggers
 
 
 from data.ray_utils import ray_marcher
@@ -156,7 +150,7 @@ def nerf_video_path(c2ws, theta_range=10,phi_range=20,N_views=120):
 
 
 
-for i_scene, scene in enumerate(['t-rex_6views']):#'horns','flower','orchids', 'room','leaves','fern','trex','fortress', '3D_Graffiti', 'illusion', 't-rex'
+for i_scene, scene in enumerate(['t-rex_36views']):#'horns','flower','orchids', 'room','leaves','fern','trex','fortress', '3D_Graffiti', 'illusion', 't-rex'
     # add --use_color_volume if the ckpts are fintuned with this flag
     cmd = f'--datadir /home/yuchen/mvsnerf/nerf_llff_data/{scene} ' \
           f'--dataset_name llff --imgScale_test {1.0}  ' \
@@ -167,8 +161,8 @@ for i_scene, scene in enumerate(['t-rex_6views']):#'horns','flower','orchids', '
 
     is_finetued = True # set False if rendering without finetuning
     if is_finetued:
-        cmd += f'--ckpt ./runs_fine_tuning/{scene}/ckpts/latest.tar'
-        name = 'DSft_'
+        cmd += f'--ckpt ./runs_fine_tuning/{scene}/ckpts/debug_no_catrays.tar'
+        name = 'debug_no_depthloss_'
     else:
         cmd += '--ckpt ./ckpts/mvsnerf-v0.tar'
         name = ''
@@ -218,7 +212,7 @@ for i_scene, scene in enumerate(['t-rex_6views']):#'horns','flower','orchids', '
             pad *= args.imgScale_test
             w2cs, c2ws = pose_source['w2cs'], pose_source['c2ws']
             pair_idx = torch.load('configs/pairs.th')[f'{scene}_train']
-            c2ws_render = get_spiral(c2ws_all[pair_idx], near_far_source, rads_scale = 0.6, N_views=180)# you can enlarge the rads_scale if you want to render larger baseline
+            c2ws_render = get_spiral(c2ws_all[pair_idx], near_far_source, rads_scale = 0.6, N_views=60)# you can enlarge the rads_scale if you want to render larger baseline
         else:            
             # neighboring views with position distance
             imgs_source, proj_mats, near_far_source, pose_source = dataset.read_source_views(device=device)
@@ -227,7 +221,7 @@ for i_scene, scene in enumerate(['t-rex_6views']):#'horns','flower','orchids', '
             pad *= args.imgScale_test
             w2cs, c2ws = pose_source['w2cs'], pose_source['c2ws']
             pair_idx = torch.load('configs/pairs.th')[f'{scene}_train']
-            c2ws_render = get_spiral(c2ws_all[pair_idx], near_far_source, rads_scale = 0.6, N_views=180)# you can enlarge the rads_scale if you want to render larger baseline
+            c2ws_render = get_spiral(c2ws_all[pair_idx], near_far_source, rads_scale = 0.6, N_views=60)# you can enlarge the rads_scale if you want to render larger baseline
             
         c2ws_render = torch.from_numpy(np.stack(c2ws_render)).float().to(device)
 

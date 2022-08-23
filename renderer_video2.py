@@ -14,8 +14,6 @@ sys.path.append(root)
 
 from opt import config_parser
 from data import dataset_dict
-from torch.utils.data import DataLoader
-import matplotlib.pyplot as plt
 
 # models
 from models import *
@@ -25,11 +23,7 @@ from scipy.spatial.transform import Rotation as R
 
 from tqdm import tqdm
 
-from skimage.metrics import structural_similarity
-
 # pytorch-lightning
-from pytorch_lightning.callbacks import ModelCheckpoint
-from pytorch_lightning import LightningModule, Trainer, loggers
 
 from data.ray_utils import ray_marcher
 
@@ -485,8 +479,6 @@ def get_nearest_pose_ids(tar_pose, ref_poses, num_select, tar_id=-1, angular_dis
 
 # In[57]:
 
-
-import glob
 
 # render_poses = {}
 # datatype = 'val'

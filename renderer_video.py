@@ -12,8 +12,6 @@ sys.path.append(root)
 
 from opt import config_parser
 from data import dataset_dict
-from torch.utils.data import DataLoader
-import matplotlib.pyplot as plt
 
 # models
 from models import *
@@ -23,11 +21,7 @@ from scipy.spatial.transform import Rotation as R
 
 from tqdm import tqdm
 
-from skimage.metrics import structural_similarity
-
 # pytorch-lightning
-from pytorch_lightning.callbacks import ModelCheckpoint
-from pytorch_lightning import LightningModule, Trainer, loggers
 
 from data.ray_utils import ray_marcher
 
@@ -162,7 +156,7 @@ def nerf_video_path(c2ws, theta_range=10, phi_range=20, N_views=120):
 # In[ ]:
 
 
-for i_scene, scene in enumerate(['t-rex_6views']):  # 'horns','flower','orchids', 'room','leaves','fern','trex','fortress', '3D_Graffiti', 'illusion', 't-rex'
+for i_scene, scene in enumerate(['t-rex_36views']):  # 'horns','flower','orchids', 'room','leaves','fern','trex','fortress', '3D_Graffiti', 'illusion', 't-rex'
     # add --use_color_volume if the ckpts are fintuned with this flag
     cmd = f'--datadir /home/yuchen/mvsnerf/nerf_llff_data/{scene} ' \
           f'--dataset_name llff --imgScale_test {1.0}  ' \
@@ -172,8 +166,8 @@ for i_scene, scene in enumerate(['t-rex_6views']):  # 'horns','flower','orchids'
 
     is_finetued = True  # set False if rendering without finetuning
     if is_finetued:
-        cmd += f'--ckpt ./runs_fine_tuning/{scene}/ckpts/latest.tar'
-        name = 'DSft_'
+        cmd += f'--ckpt ./runs_fine_tuning/{scene}/ckpts/debug_with_depthloss.tar'
+        name = 'debug_with_depthloss_'
     else:
         cmd += '--ckpt ./ckpts/mvsnerf-v0.tar'
         name = ''

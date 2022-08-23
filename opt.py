@@ -34,7 +34,6 @@ def config_parser(cmd=None):
                         help='point sampling with density')
 
     # training options
-    parser.add_argument("--use_casmvs", action='store_true')
     parser.add_argument("--netdepth", type=int, default=6,
                         help='layers in network')
     parser.add_argument("--netwidth", type=int, default=128,
@@ -89,7 +88,6 @@ def config_parser(cmd=None):
     # logging/saving options
     parser.add_argument("--N_vis", type=int, default=20,
                         help='frequency of visualize the depth')
-
     parser.add_argument("--depth_loss", default=False, action="store_true",
                         help='Use depth supervision by colmap - depth loss.')
 

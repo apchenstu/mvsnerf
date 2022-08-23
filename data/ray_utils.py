@@ -8,6 +8,7 @@ from renderer import depth2dist
 from utils import index_point_feature
 
 
+
 def get_ray_directions(H, W, focal, center=None):
     """
     Get ray directions for all pixels in camera coordinate.
@@ -97,10 +98,10 @@ def get_ndc_rays(H, W, focal, near, rays_o, rays_d):
 def sample_pdf(bins, weights, N_samples, det=False, pytest=False):
     device = weights.device
     # Get pdf
-    weights = weights + 1e-5  # prevent nans
+    weights = weights + 1e-5 # prevent nans
     pdf = weights / torch.sum(weights, -1, keepdim=True)
     cdf = torch.cumsum(pdf, -1)
-    cdf = torch.cat([torch.zeros_like(cdf[..., :1]), cdf], -1)  # (batch, len(bins))
+    cdf = torch.cat([torch.zeros_like(cdf[...,:1]), cdf], -1)  # (batch, len(bins))
 
     # Take uniform samples
     if det:
@@ -123,31 +124,30 @@ def sample_pdf(bins, weights, N_samples, det=False, pytest=False):
     # Invert CDF
     u = u.contiguous()
     inds = searchsorted(cdf.detach(), u, right=True)
-    below = torch.max(torch.zeros_like(inds - 1), inds - 1)
-    above = torch.min((cdf.shape[-1] - 1) * torch.ones_like(inds), inds)
+    below = torch.max(torch.zeros_like(inds-1), inds-1)
+    above = torch.min((cdf.shape[-1]-1) * torch.ones_like(inds), inds)
     inds_g = torch.stack([below, above], -1)  # (batch, N_samples, 2)
+
 
     matched_shape = [inds_g.shape[0], inds_g.shape[1], cdf.shape[-1]]
     cdf_g = torch.gather(cdf.unsqueeze(1).expand(matched_shape), 2, inds_g)
     bins_g = torch.gather(bins.unsqueeze(1).expand(matched_shape), 2, inds_g)
 
-    denom = (cdf_g[..., 1] - cdf_g[..., 0])
-    denom = torch.where(denom < 1e-5, torch.ones_like(denom), denom)
-    t = (u - cdf_g[..., 0]) / denom
-    samples = bins_g[..., 0] + t * (bins_g[..., 1] - bins_g[..., 0])
+    denom = (cdf_g[...,1]-cdf_g[...,0])
+    denom = torch.where(denom<1e-5, torch.ones_like(denom), denom)
+    t = (u-cdf_g[...,0])/denom
+    samples = bins_g[...,0] + t * (bins_g[...,1]-bins_g[...,0])
 
     return samples
 
-
 def dda(rays_o, rays_d, bbox_3D):
-    inv_ray_d = 1.0 / (rays_d + 1e-6)
-    t_min = (bbox_3D[:1] - rays_o) * inv_ray_d  # N_rays 3
-    t_max = (bbox_3D[1:] - rays_o) * inv_ray_d
-    t = torch.stack((t_min, t_max))  # 2 N_rays 3
-    t_min = torch.max(torch.min(t, dim=0)[0], dim=-1, keepdim=True)[0]
-    t_max = torch.min(torch.max(t, dim=0)[0], dim=-1, keepdim=True)[0]
+    inv_ray_d = 1.0/(rays_d+1e-6)
+    t_min = (bbox_3D[:1] - rays_o)*inv_ray_d # N_rays 3
+    t_max = (bbox_3D[1:] - rays_o)*inv_ray_d
+    t = torch.stack((t_min,t_max)) # 2 N_rays 3
+    t_min = torch.max(torch.min(t, dim=0)[0],dim=-1, keepdim=True)[0]
+    t_max = torch.min(torch.max(t, dim=0)[0],dim=-1, keepdim=True)[0]
     return t_min, t_max
-
 
 def ray_marcher(rays,
                 N_samples=64,
@@ -190,24 +190,24 @@ def ray_marcher(rays,
         perturb_rand = perturb * torch.rand(z_vals.shape, device=rays.device)
         z_vals = lower + (upper - lower) * perturb_rand
 
-    # rays_o.unsqueeze(1) (N_rays, 1, 3)
-    # z_vals.unsqueeze(2) (N_rays, N_samples, 1)
     xyz_coarse_sampled = rays_o.unsqueeze(1) + \
                          rays_d.unsqueeze(1) * z_vals.unsqueeze(2)  # (N_rays, N_samples, 3)
 
+
     return xyz_coarse_sampled, rays_o, rays_d, z_vals
 
-
 def ray_marcher_fine(rays,
-                     density_volume,
-                     z_vals,
-                     pts_NDC,
-                     N_importance=64,
-                     lindisp=False):
+                density_volume,
+                z_vals,
+                pts_NDC,
+                N_importance=64,
+                lindisp=False):
+
+
     rays_o, rays_d = rays[:, 0:3], rays[:, 3:6]  # both (N_rays, 3)
 
-    pts_NDC = pts_NDC * 2 - 1.0
-    sigma = index_point_feature(density_volume[None, None], pts_NDC)
+    pts_NDC = pts_NDC*2-1.0
+    sigma = index_point_feature(density_volume[None,None], pts_NDC)
 
     alpha = 1. - torch.exp(-torch.relu(sigma))  # *5e-3
     weights = alpha * torch.cumprod(
@@ -222,7 +222,6 @@ def ray_marcher_fine(rays,
                          rays_d.unsqueeze(1) * z_vals.unsqueeze(2)  # (N_rays, N_samples, 3)
 
     return xyz_coarse_sampled, rays_o, rays_d, z_vals
-
 
 def get_rays_by_coord_np(H, W, focal, c2w, coords):
     i, j = (coords[:, 0] - W * 0.5) / focal, -(coords[:, 1] - H * 0.5) / focal

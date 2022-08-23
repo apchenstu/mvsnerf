@@ -1,5 +1,3 @@
-import torch
-
 from opt import config_parser
 from torch.utils.data import DataLoader
 
@@ -17,6 +15,8 @@ import imageio
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning import LightningModule, Trainer, loggers
 
+# import os
+# os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
@@ -55,8 +55,9 @@ class MVSSystem(LightningModule):
 
         dataset = dataset_dict[self.args.dataset_name]
         self.train_dataset = dataset(args, split='train')
-        self.val_dataset = dataset(args, split='val')
         self.train_dataset_depth = dataset(args, split='train_depth')
+        self.val_dataset = dataset(args, split='val')
+        # self.train_dataset = dataset(args)
         self.init_volume()
         self.grad_vars += list(self.volume.parameters())
 
@@ -122,7 +123,6 @@ class MVSSystem(LightningModule):
         rgbs = batch['rgbs'].squeeze()  # (B, 3)
         return rays, rgbs
 
-
     def unpreprocess(self, data, shape=(1, 1, 3, 1, 1)):
         # to unnormalize image for visualization
         device = data.device
@@ -138,21 +138,22 @@ class MVSSystem(LightningModule):
         scheduler = get_scheduler(self.args, self.optimizer)
         return [self.optimizer], [scheduler]
 
+    # FIXME: update learning rate
     def get_lr(self):
         for param_group in self.optimizer.param_groups:
             return param_group['lr']
 
     def train_dataloader(self):
         return [DataLoader(self.train_dataset,
-                          shuffle=True,
-                          num_workers=8,
-                          batch_size=args.batch_size,
-                          pin_memory=True),
+                           shuffle=True,
+                           num_workers=8,
+                           batch_size=args.batch_size,
+                           pin_memory=True),
                 DataLoader(self.train_dataset_depth,
-                          shuffle=True,
-                          num_workers=8,
-                          batch_size=args.batch_size,
-                          pin_memory=True)
+                           shuffle=True,
+                           num_workers=8,
+                           batch_size=args.batch_size,
+                           pin_memory=True)
                 ]
 
     def val_dataloader(self):
@@ -163,27 +164,18 @@ class MVSSystem(LightningModule):
                           pin_memory=True)
 
     def training_step(self, batch, batch_nb):
-        # rays (batch_size, 8),
-        # rgbs_target (batch_size, 3),
-        # depths_target (batch_size),
-        # depRays (batch_size, 2)
+
         rays, rgbs_target, depths_target, depRays = self.decode_batch(batch)
 
         if args.use_density_volume and 0 == self.global_step % 200:
             self.update_density_volume()
-
         rays = torch.cat([rays, depRays], 0)
-        # xyz_coarse_sampled (B, N_samples, 3)
-        # rays_o (B, 3)
-        # rays_d (B, 3)
-        # z_vals (B, N_samples)
         xyz_coarse_sampled, rays_o, rays_d, z_vals = ray_marcher(rays, N_samples=args.N_samples,
                                                                  lindisp=args.use_disp, perturb=args.perturb)
         xyz_coarse_sampled = xyz_coarse_sampled.float()
         rays_o = rays_o.float()
         rays_d = rays_d.float()
         z_vals = z_vals.float()
-
         # Converting world coordinate to ndc coordinate
         H, W = self.imgs.shape[-2:]
         inv_scale = torch.tensor([W - 1, H - 1]).to(device)
@@ -192,7 +184,7 @@ class MVSSystem(LightningModule):
                                      near=self.near_far_source[0], far=self.near_far_source[1], pad=args.pad,
                                      lindisp=args.use_disp)
 
-        # important sampling
+        # important sampleing
         if self.density_volume is not None and args.N_importance > 0:
             xyz_coarse_sampled, rays_o, rays_d, z_vals = ray_marcher_fine(rays, self.density_volume, z_vals, xyz_NDC,
                                                                           N_importance=args.N_importance)
@@ -206,7 +198,6 @@ class MVSSystem(LightningModule):
                                                                self.volume, self.imgs, **self.render_kwargs_train)
         rgbs = rgbs[:args.batch_size, :]
         depth_pred = depth_pred[args.batch_size:]
-
         log, loss = {}, 0
         if 'rgb0' in extras:
             img_loss0 = img2mse(extras['rgb0'], rgbs_target)
@@ -224,21 +215,22 @@ class MVSSystem(LightningModule):
             depth_loss = img2mse(depth_pred, depths_target)
             loss += 0.1 * depth_loss
 
-
             with torch.no_grad():
                 self.log('train/loss', loss, prog_bar=True)
                 self.log('train/img_mse_loss', img_loss.item(), prog_bar=False)
                 self.log('train/PSNR', psnr.item(), prog_bar=True)
 
+        # if self.global_step == 3999 or self.global_step == 9999:
+        #     self.save_ckpt(f'{self.global_step}')
 
-        return {'loss': loss, 'psnr': psnr}
+        return {'loss': loss}
 
     def validation_step(self, batch, batch_nb):
 
         self.MVSNet.train()
-        # rays, img, depths, depRays = self.decode_batch(batch)
         rays, img = self.decode_batch_val(batch)
         img = img.cpu()  # (H, W, 3)
+        # mask = batch['mask'][0]
 
         N_rays_all = rays.shape[0]
 
@@ -324,7 +316,7 @@ class MVSSystem(LightningModule):
         self.log('val/PSNR_all', mean_psnr_all, prog_bar=True)
         return
 
-    def save_ckpt(self, name='latest'):
+    def save_ckpt(self, name='debug_version'):
         save_dir = f'runs_fine_tuning/{self.args.expname}/ckpts'
         os.makedirs(save_dir, exist_ok=True)
         path = f'{save_dir}/{name}.tar'
@@ -347,7 +339,7 @@ if __name__ == '__main__':
     checkpoint_callback = ModelCheckpoint(os.path.join(f'runs_fine_tuning/{args.expname}/ckpts/', '{epoch:02d}'),
                                           monitor='val/PSNR',
                                           mode='max',
-                                          save_top_k=-1)
+                                          save_top_k=0)
 
     logger = loggers.TestTubeLogger(
         save_dir="runs_fine_tuning",
@@ -369,8 +361,7 @@ if __name__ == '__main__':
                       val_check_interval=500,
                       benchmark=True,
                       precision=16 if args.use_amp else 32,
-                      amp_level='O1'
-                      )
+                      amp_level='O1')
 
     trainer.fit(system)
     system.save_ckpt()

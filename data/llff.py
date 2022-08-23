@@ -1,10 +1,12 @@
+import torch
 from torch.utils.data import Dataset
 import glob
+import numpy as np
+import os
 from PIL import Image as I
 from torchvision import transforms as T
 
 from .ray_utils import *
-
 import imageio
 from pathlib import Path
 from colmapUtils.read_write_model import *
@@ -35,6 +37,7 @@ def _minify(basedir, factors=[], resolutions=[]):
     if not needtoload:
         return
 
+    from shutil import copy
     from subprocess import check_output
 
     imgdir = os.path.join(basedir, 'images')
@@ -146,6 +149,7 @@ def average_poses(poses):
     3. Compute axis y': the average y axis.
     4. Compute x' = y' cross product z, then normalize it as the x axis.
     5. Compute the y axis: z cross product x.
+
     Note that at step 3, we cannot directly use y' as y axis since it's
     not necessarily orthogonal to z axis. We need to pass from x to y.
     Inputs:
@@ -156,20 +160,16 @@ def average_poses(poses):
     # 1. Compute the center
     center = poses[..., 3].mean(0)  # (3)
 
-    # 2. Compute the z axis, same to use sum and mean here
-    # z is vec2
+    # 2. Compute the z axis
     z = normalize(poses[..., 2].mean(0))  # (3)
 
     # 3. Compute axis y' (no need to normalize as it's not the final output)
-    # y_ is up/N
     y_ = poses[..., 1].mean(0)  # (3)
 
     # 4. Compute the x axis
-    # x is vec0 in viewmatrix
     x = normalize(np.cross(y_, z))  # (3)
 
     # 5. Compute the y axis (as z and x are normalized, y is already of norm 1)
-    # y is vec1 in viewmatrix
     y = np.cross(z, x)  # (3)
 
     pose_avg = np.stack([x, y, z, center], 1)  # (3, 4)
@@ -198,11 +198,13 @@ def center_poses(poses, blender2opencv):
         np.concatenate([poses, last_row], 1)  # (N_images, 4, 4) homogeneous coordinate
 
     poses_centered = np.linalg.inv(pose_avg_homo) @ poses_homo  # (N_images, 4, 4)
+    # 草，这个地方源代码没有乘这个blender2opencv，做这个操作相当于把相机转换到另一个坐标系了，和一般的nerf坐标系不同
     poses_centered = poses_centered @ blender2opencv
     poses_centered = poses_centered[:, :3]  # (N_images, 3, 4)
+    print('center in center_poses',poses_centered[:, :3, 3].mean(0))
 
     return poses_centered, np.linalg.inv(pose_avg_homo) @ blender2opencv
-    # return poses_centered, np.linalg.inv(pose_avg_homo)
+
 
 def create_spiral_poses(radii, focus_depth, n_poses=120):
     """
@@ -288,11 +290,16 @@ class LLFFDataset(Dataset):
         self.args = args
         self.root_dir = args.datadir
         self.split = split
-
+        # downsample = args.imgScale_train if split == 'train' else args.imgScale_test
+        # self.img_wh = (int(960*downsample),int(640*downsample))
+        # assert self.img_wh[0] % 32 == 0 or self.img_wh[1] % 32 == 0, \
+        #     'image width must be divisible by 32, you may need to modify the imgScale'
         self.spheric_poses = spheric_poses
         self.define_transforms()
 
         self.blender2opencv = np.array([[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]])
+        # self.blender2opencv = np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]])
+
         if not load_ref:
             self.read_meta()
         if depth_loss:
@@ -305,8 +312,11 @@ class LLFFDataset(Dataset):
         images = read_images_binary(Path(root_dir) / 'sparse' / '0' / 'images.bin')
         points = read_points3d_binary(Path(root_dir) / 'sparse' / '0' / 'points3D.bin')
 
+        # # TODO: is this a valid approach?
+        # factor = np.sqrt(self.W * self.H / self.img_wh[0] / self.img_wh[1])
         poses = get_poses(images)
         _, bds_raw, _ = _load_data(root_dir, width=self.img_wh[0], height=self.img_wh[1])
+        # _, bds_raw, _ = _load_data(root_dir, factor=factor)  # factor=8 downsamples original imgs by 8x
         bds_raw = np.moveaxis(bds_raw, -1, 0).astype(np.float32)
         # Rescale if bd_factor is provided
         sc = 1. if bd_factor is None else 1. / (bds_raw.min() * bd_factor)
@@ -348,7 +358,6 @@ class LLFFDataset(Dataset):
             else:
                 # near = self.bounds.min()
                 # far = min(8 * near, self.bounds.max())  # focus on central object only
-                # FIXME: bug here
                 near = self.bounds[id_im-1][0]*0.8
                 far = self.bounds[id_im-1][1]*1.2  # focus on central object only
 
@@ -362,13 +371,17 @@ class LLFFDataset(Dataset):
         if 'train_depth' == self.split:
             self.all_depRays = torch.cat(self.all_depRays, 0)  # (N_points by colmap, 2)
             self.all_depths = torch.cat(self.all_depths, 0)  # .unsqueeze(1)  # (N_points by colmap, 1)
+            # print("dummy")
+        # elif 'val_depth' == self.split:
+        #     self.all_depths = torch.cat(self.all_depths, 0)
+        #     self.all_depRays = torch.cat(self.all_depRays, 0)
 
     def read_meta(self):
         poses_bounds = np.load(os.path.join(self.root_dir, 'poses_bounds.npy'))  # (N_images, 17)
         self.image_paths = sorted(glob.glob(os.path.join(self.root_dir, 'images/*')))
         # load full resolution image then resize
         if self.split in ['train', 'val']:
-            print(len(poses_bounds) , len(self.image_paths), self.root_dir)
+            print(len(poses_bounds) , len(self.image_paths),self.root_dir)
             assert len(poses_bounds) == len(self.image_paths), \
                 'Mismatch between number of images and number of poses! Please rerun COLMAP!'
 
@@ -377,12 +390,13 @@ class LLFFDataset(Dataset):
 
         # Step 1: rescale focal length according to training resolution
         self.H, self.W, self.focal = poses[0, :, -1]  # original intrinsics, same for all images
+        # self.focal = [self.focal* self.img_wh[0] / W, self.focal* self.img_wh[1] / H]
 
         downsample = self.args.imgScale_train if self.split == 'train' else self.args.imgScale_test
         # TODO: add more resolution scales here to accommodate more datasets
-        if self.W / self.H == 4/3:
+        if self.W / self.H == 4 / 3:
             self.img_wh = (int(1024 * downsample), int(768 * downsample))
-        elif self.W / self.H == 16/9:
+        elif self.W / self.H == 16 / 9:
             self.img_wh = (int(1024 * downsample), int(576 * downsample))
         assert self.img_wh[0] % 32 == 0 or self.img_wh[1] % 32 == 0, \
             'image width must be divisible by 32, you may need to modify the imgScale'
@@ -392,31 +406,39 @@ class LLFFDataset(Dataset):
         self.factor = self.W / self.img_wh[0]
         self.focal /= self.factor
 
+
         # Step 2: correct poses
         # Original poses has rotation in form "down right back", change to "right up back"
         # See https://github.com/bmild/nerf/issues/34
         poses = np.concatenate([poses[..., 1:2], -poses[..., :1], poses[..., 2:4]], -1)
         # (N_images, 3, 4) exclude H, W, focal
 
+        # print('pose_avg in read_meta', self.pose_avg)
+        # self.poses = poses @ self.blender2opencv
+
         # Step 3: correct scale so that the nearest depth is at a little more than 1.0
         # See https://github.com/bmild/nerf/issues/34
         near_original = self.bounds.min()
         scale_factor = near_original * 0.75  # 0.75 is the default parameter
+        print('scale_factor', scale_factor)
         # the nearest depth is at 1/0.75=1.33
         self.bounds /= scale_factor
-        poses[..., 3] /= scale_factor  # FIXME: H and W need to rescale?
-        # FIXME: what is the purpose of pose_avg here
-        self.poses, self.pose_avg = center_poses(poses, self.blender2opencv)  # pose_avg = inv(c2w)
+        poses[..., 3] /= scale_factor
+        self.poses, self.pose_avg = center_poses(poses, self.blender2opencv)
         # sub select training views from pairing file
         if os.path.exists('configs/pairs.th'):
             name = os.path.basename(self.root_dir)
-            # TODO: better ways to implement this
             if self.split[-6:] == '_depth':
                 temp_split = self.split[:-6]
                 self.img_idx = torch.load('configs/pairs.th')[f'{name}_{temp_split}']
             else:
                 self.img_idx = torch.load('configs/pairs.th')[f'{name}_{self.split}']
+
             print(f'===> {self.split}ing index: {self.img_idx}')
+
+        # distances_from_center = np.linalg.norm(self.poses[..., 3], axis=1)
+        # val_idx = np.argmin(distances_from_center)  # choose val image as the closest to
+        # center image
 
 
         # ray directions for all pixels, same for all images (same H, W, focal)
@@ -479,11 +501,15 @@ class LLFFDataset(Dataset):
 
         # Step 1: rescale focal length according to training resolution
         # H, W, focal = poses[0, :, -1]  # original intrinsics, same for all images
-
-        # focal = [focal * self.img_wh[0] / W, focal * self.img_wh[1] / H]
+        # print('original focal', focal)
+        #
+        # focal = [focal* self.img_wh[0] / W, focal* self.img_wh[1] / H]
+        # print('porcessed focal', focal)
 
         # Step 2: correct poses
         poses = np.concatenate([poses[..., 1:2], -poses[..., :1], poses[..., 2:4]], -1)
+
+        # poses = poses @ self.blender2opencv
 
         # sub select training views from pairing file
         if pair_idx is None:
@@ -502,7 +528,6 @@ class LLFFDataset(Dataset):
         bounds /= scale_factor
         poses[..., 3] /= scale_factor
         poses, _ = center_poses(poses, self.blender2opencv)
-        
         src_transform = T.Compose([T.Normalize(mean=[0.485, 0.456, 0.406],
                                                 std=[0.229, 0.224, 0.225]),
                                     ])
@@ -513,7 +538,6 @@ class LLFFDataset(Dataset):
         intrinsics, c2ws, w2cs = [],[],[]
         for i, idx in enumerate(pair_idx):
             c2w = torch.eye(4).float()
-            print(f'index = {idx}')
             image_path = image_paths[idx]
             c2w[:3] = torch.FloatTensor(poses[idx])
             w2c = torch.inverse(c2w)
@@ -535,7 +559,6 @@ class LLFFDataset(Dataset):
 
             img = I.open(image_path).convert('RGB')
             img = img.resize(self.img_wh, I.LANCZOS)
-            # img.save("test.jpg")
             img = self.transform(img)  # (3, h, w)
             imgs.append(src_transform(img))
 
@@ -549,7 +572,6 @@ class LLFFDataset(Dataset):
         imgs = torch.stack(imgs).float().unsqueeze(0).to(device)
         proj_mats = torch.from_numpy(np.stack(proj_mats)[:,:3]).float().unsqueeze(0).to(device)
         return imgs, proj_mats, near_far_source, pose_source
-
 
     def define_transforms(self):
         self.transform = T.ToTensor()
@@ -572,4 +594,3 @@ class LLFFDataset(Dataset):
             sample = {}
 
         return sample
-
