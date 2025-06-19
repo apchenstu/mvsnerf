@@ -32,8 +32,8 @@ Please see each subsection for training on different datasets. Available trainin
 
 Download the preprocessed [DTU training data](https://drive.google.com/file/d/1eDjh-_bxKKnEuz5h-HXS7EDJn59clx6V/view)
 and [Depth_raw](https://virutalbuy-public.oss-cn-hangzhou.aliyuncs.com/share/cascade-stereo/CasMVSNet/dtu_data/dtu_train_hr/Depths_raw.zip) from original [MVSNet repo](https://github.com/YoYo000/MVSNet)
-and unzip. We provide a [DTU example](https://1drv.ms/u/s!AjyDwSVHuwr8zhAAXh7x5We9czKj?e=oStQ48), please
-follow with the example's folder structure.
+and unzip. We provide a [DTU example](https://huggingface.co/apchen/MVSNeRF/blob/main/dtu_example.zip), please
+follow the example's folder structure.
 
 #### Training model
 
